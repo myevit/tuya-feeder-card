@@ -14,9 +14,33 @@ type Meal = {
   portions: number;
   enabled: boolean;
 };
-type Config = { type?: string; entity: string; title?: string; icon?: string };
+type Appearance = Partial<
+  Record<
+    | "accent_color"
+    | "border_radius"
+    | "font_family"
+    | "header_font_size"
+    | "meal_time_font_size"
+    | "row_background"
+    | "card_background"
+    | "control_size",
+    string
+  >
+>;
+type Config = {
+  type?: string;
+  entity: string;
+  title?: string;
+  icon?: string;
+  manual_feed?: boolean;
+  feed_title?: string;
+  feed_icon?: string;
+  portions_entity?: string;
+  appearance?: Appearance;
+};
 type Hass = {
   states: Record<string, { state: string; attributes: Record<string, any> }>;
+  services?: Record<string, Record<string, unknown>>;
   callService: (domain: string, service: string, data: unknown) => Promise<any>;
 };
 const clone = (m: Meal[]) => m.map((x) => ({ ...x, days: [...x.days] }));
@@ -49,87 +73,126 @@ const samePlan = (a: Meal[], b: Meal[]) =>
       m.days.length === b[i].days.length &&
       m.days.every((d) => b[i].days.includes(d)),
   );
+const APPEARANCE = [
+  "accent_color",
+  "border_radius",
+  "font_family",
+  "header_font_size",
+  "meal_time_font_size",
+  "row_background",
+  "card_background",
+  "control_size",
+] as const;
+// Only individual CSS property values, never a stylesheet, HTML, URL or selector.
+function safeAppearance(a: Appearance = {}): Appearance {
+  const out: Appearance = {};
+  const props = {
+    accent_color: "color",
+    border_radius: "border-radius",
+    font_family: "font-family",
+    header_font_size: "font-size",
+    meal_time_font_size: "font-size",
+    row_background: "background-color",
+    card_background: "background-color",
+    control_size: "width",
+  };
+  for (const key of APPEARANCE) {
+    const v = a[key];
+    if (v === undefined || v === "") continue;
+    if (
+      typeof v !== "string" ||
+      v.length > 160 ||
+      /[;{}<>\\]|url\s*\(|expression\s*\(|!important|\/\*/i.test(v) ||
+      !CSS.supports(props[key], v)
+    )
+      throw new Error(`Invalid appearance.${key}`);
+    out[key] = v;
+  }
+  return out;
+}
 export class TuyaFeederCard extends LitElement {
   static properties = {
     config: { state: true },
     draft: { state: true },
-    dirty: { state: true },
-    conflict: { state: true },
+    editing: { state: true },
+    view: { state: true },
     busy: { state: true },
     message: { state: true },
-    dialogOpen: { state: true },
-    editing: { state: true },
-    deleteConfirm: { state: true },
-    infoOpen: { state: true },
+    conflict: { state: true },
+    acknowledged: { state: true },
+    feedPortions: { state: true },
+    feedBusy: { state: true },
+    helperBusy: { state: true },
   };
   config!: Config;
   draft: Meal[] = [];
-  dirty = false;
-  conflict = false;
-  busy = false;
-  message = "";
-  dialogOpen = false;
   editing: number | null = null;
-  deleteConfirm = false;
-  infoOpen = false;
+  view: "list" | "edit" | "delete" | "feed" = "list";
+  busy = false;
+  feedBusy = false;
+  helperBusy = false;
+  message = "";
+  conflict = false;
+  acknowledged = false;
+  feedPortions = 1;
   private _hass?: Hass;
-  private base: unknown;
+  private base = 0;
+  private baseline: Meal[] = [];
   private sent?: Meal[];
   private sentAt?: string;
   private serviceCompleted = false;
-  private confirmationTimer?: ReturnType<typeof setTimeout>;
-  private clearConfirmationTimer() {
-    if (this.confirmationTimer) clearTimeout(this.confirmationTimer);
-    this.confirmationTimer = undefined;
-  }
+  private failed = false;
+  private operation: "update_meal" | "add_meal" | "delete_meal" = "update_meal";
+  private feedDose?: number;
+  private timer?: ReturnType<typeof setTimeout>;
   setConfig(c: Config) {
     if (!c.entity?.startsWith("sensor."))
       throw new Error("Select a schedule sensor");
-    if (this.busy)
-      throw new Error("Wait for schedule confirmation before changing entity");
-    this.config = { ...c };
-    this.dirty = false;
-    this.conflict = false;
-    this.load();
+    if (c.portions_entity && !c.portions_entity.startsWith("input_number."))
+      throw new Error("Select a portions helper");
+    if (this.busy || this.feedBusy)
+      throw new Error("Wait for completion before changing config");
+    this.config = { ...c, appearance: safeAppearance(c.appearance) };
+    for (const key of APPEARANCE) {
+      this.style.removeProperty(`--feeder-${key.replaceAll("_", "-")}`);
+      const v = this.config.appearance?.[key];
+      if (v) this.style.setProperty(`--feeder-${key.replaceAll("_", "-")}`, v);
+    }
+    this.reset();
   }
   set hass(h: Hass) {
     this._hass = h;
     const a = this.attrs;
     if (this.busy) {
-      if (a.error && !a.pending) {
-        this.clearConfirmationTimer();
-        this.busy = false;
-        this.message = String(a.error);
-        this.conflict = true;
-      } else if (
-        this.writable &&
-        this.attrs.snapshot_source === "received" &&
+      if (a.error && !a.pending) this.failure(a.error);
+      else if (
         this.serviceCompleted &&
-        !a.pending &&
-        a.revision > (this.base as number) &&
-        a.last_received_at !== this.sentAt &&
-        this.sent?.length === a.meals.length &&
-        this.sent?.every(
-          (m, i) =>
-            m.time === a.meals[i].time &&
-            m.portions === a.meals[i].portions &&
-            m.enabled === a.meals[i].enabled,
-        )
+        this.writable &&
+        a.snapshot_source === "received" &&
+        a.revision > this.base &&
+        Date.parse(a.last_received_at) > Date.parse(this.sentAt ?? "") &&
+        this.sent &&
+        samePlan(this.sent, a.meals)
       ) {
+        this.clearTimer();
         this.busy = false;
-        this.dirty = false;
+        this.failed = false;
         this.sent = undefined;
-        this.clearConfirmationTimer();
+        this.editing = null;
         this.load();
-        this.message = "Schedule confirmed by incoming device report.";
+        this.message = "Saved";
       }
-    } else if (this.dirty && a.revision !== this.base) {
-      this.conflict = true;
-      this.message =
-        "Schedule changed while editing. Reload explicitly before saving.";
-      this.closeDialog();
-      this.closeEditor();
-    } else if (!this.dirty) this.load();
+    } else if (this.editing !== null || this.failed) {
+      if (
+        a.revision !== this.base ||
+        !this.writable ||
+        !samePlan(this.baseline, a.meals)
+      ) {
+        this.conflict = true;
+        this.view = "list";
+        this.message = "Schedule changed. Reload to continue.";
+      }
+    } else this.load();
     this.requestUpdate();
   }
   get hass() {
@@ -143,6 +206,10 @@ export class TuyaFeederCard extends LitElement {
       a = this.attrs;
     return (
       !!s &&
+      (!this._hass?.services ||
+        ["update_meal", "add_meal", "delete_meal"].every(
+          (name) => !!this._hass?.services?.tuya_feeder?.[name],
+        )) &&
       !["unknown", "unavailable"].includes(s.state) &&
       ((a.supports_schedule_write === true &&
         a.snapshot_source === "received") ||
@@ -153,7 +220,6 @@ export class TuyaFeederCard extends LitElement {
       Number.isSafeInteger(a.revision) &&
       a.revision > 0 &&
       typeof a.last_received_at === "string" &&
-      !!a.last_received_at &&
       Number.isFinite(Date.parse(a.last_received_at)) &&
       a.schedule_valid === true &&
       a.pending === false &&
@@ -166,119 +232,276 @@ export class TuyaFeederCard extends LitElement {
     );
   }
   private get locked() {
-    return !this.writable || this.conflict || this.busy;
+    return !this.writable || this.conflict || this.busy || this.feedBusy;
   }
   private load() {
-    if (!this.config) return;
-    const a = this.attrs;
-    this.base = a.revision;
-    this.draft = Array.isArray(a.meals)
-      ? a.meals.map((m: any) => ({
-          ...m,
-          days:
-            m.days === "Everyday"
-              ? [...DAYS]
-              : Array.isArray(m.days)
-                ? [...m.days]
-                : [],
-        }))
+    this.base = this.attrs.revision;
+    this.baseline = valid(
+      this.attrs.meals,
+      this.attrs.max_meals,
+      this.attrs.max_portions,
+    )
+      ? clone(this.attrs.meals)
       : [];
-    this.requestUpdate();
+    this.draft = clone(this.baseline);
   }
-  private edit(i: number, key: keyof Meal, value: any) {
+  private reset() {
+    if (this.busy || this.feedBusy) return;
+    this.editing = null;
+    this.view = "list";
+    this.conflict = false;
+    this.failed = false;
+    this.message = "";
+    this.acknowledged = false;
+    this.load();
+  }
+  private async openEditor(i: number, enabled?: boolean) {
     if (this.locked) return;
-    this.draft = this.draft.map((m, n) =>
-      n === i ? { ...m, [key]: value } : m,
-    );
-    this.dirty = !samePlan(this.draft, this.attrs.meals);
+    this.load();
+    this.operation = "update_meal";
+    this.editing = i;
+    this.view = "edit";
+    this.acknowledged = false;
+    this.message = "";
+    if (enabled !== undefined) this.edit("enabled", enabled);
+    await this.updateComplete;
+    this.renderRoot.querySelector<HTMLButtonElement>("[data-back]")?.focus();
   }
   private add() {
-    if (this.locked || this.draft.length >= Math.min(10, this.attrs.max_meals))
+    if (
+      this.locked ||
+      this.baseline.length >= Math.min(10, this.attrs.max_meals)
+    )
       return;
+    this.load();
+    this.editing = this.draft.length;
+    this.operation = "add_meal";
+    this.view = "edit";
+    this.acknowledged = false;
+    this.message = "";
     this.draft = [
       ...this.draft,
       { days: [...DAYS], time: "23:59", portions: 1, enabled: false },
     ];
-    this.dirty = true;
   }
-  private reset() {
-    if (this.busy) return;
-    this.dirty = false;
-    this.conflict = false;
-    this.message = "";
-    this.closeDialog();
-    this.closeEditor();
-    this.load();
+  private edit(key: keyof Meal, value: unknown) {
+    if (this.locked || this.editing === null) return;
+    this.draft = this.draft.map((m, n) =>
+      n === this.editing ? { ...m, [key]: value } : m,
+    );
+  }
+  private async cancel() {
+    if (this.busy || this.feedBusy) return;
+    if (this.view === "delete") {
+      this.view = "edit";
+      return;
+    }
+    const i = this.editing;
+    this.reset();
+    await this.updateComplete;
+    this.renderRoot
+      .querySelector<HTMLButtonElement>(`[data-meal="${i}"]`)
+      ?.focus();
   }
   private get saveable() {
     return (
       !this.locked &&
-      this.dirty &&
-      !samePlan(this.draft, this.attrs.meals) &&
-      valid(this.draft, this.attrs.max_meals, this.attrs.max_portions)
+      this.editing !== null &&
+      valid(this.draft, this.attrs.max_meals, this.attrs.max_portions) &&
+      !samePlan(this.draft, this.baseline) &&
+      (this.attrs.snapshot_source !== "restored" || this.acknowledged)
     );
   }
-  private async review() {
-    if (!this.saveable) return;
-    this.dialogOpen = true;
-    await this.updateComplete;
-    const d = this.renderRoot.querySelector<HTMLDialogElement>(
-      "dialog[data-review]",
-    )!;
-    d.showModal();
-    d.querySelector<HTMLButtonElement>("[data-cancel]")?.focus();
+  private clearTimer() {
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = undefined;
   }
-  private closeDialog() {
-    this.renderRoot
-      .querySelector<HTMLDialogElement>("dialog[data-review]")
-      ?.close();
-    this.dialogOpen = false;
-    this.renderRoot.querySelector<HTMLButtonElement>("[data-save]")?.focus();
+  private failure(e: unknown) {
+    console.error("Tuya feeder operation failed", e);
+    this.clearTimer();
+    this.busy = false;
+    this.failed = true;
+    this.message = "Couldn’t save. Try again.";
+    this.requestUpdate();
   }
-  private async confirm() {
-    if (!this.saveable) return;
-    this.sent = clone(this.draft);
+  private retry() {
+    if (
+      this.busy ||
+      this.conflict ||
+      this.editing === null ||
+      this.attrs.revision !== this.base ||
+      !this.writable ||
+      !samePlan(this.baseline, this.attrs.meals)
+    )
+      return;
+    this.failed = false;
+    this.view = this.operation === "delete_meal" ? "delete" : "edit";
+    this.message = "";
+  }
+  private async save(deleting = false) {
+    if (
+      this.editing === null ||
+      this.locked ||
+      this.attrs.revision !== this.base ||
+      !samePlan(this.baseline, this.attrs.meals)
+    )
+      return;
+    if (
+      deleting
+        ? this.view !== "delete" ||
+          (this.attrs.snapshot_source === "restored" && !this.acknowledged)
+        : !this.saveable
+    )
+      return;
+    if (deleting) this.operation = "delete_meal";
+    const index = this.editing;
+    this.sent = deleting
+      ? clone(this.baseline.filter((_, i) => i !== index))
+      : clone(this.draft);
+    const data = {
+      entity_id: this.config.entity,
+      expected_revision: this.base,
+      ...(this.operation !== "add_meal" ? { meal_index: index } : {}),
+      ...(!deleting ? { meal: clone([this.draft[index]])[0] } : {}),
+      ...(this.attrs.snapshot_source === "restored"
+        ? { acknowledge_restored_snapshot: true }
+        : {}),
+    };
     this.sentAt = this.attrs.last_received_at;
     this.serviceCompleted = false;
     this.busy = true;
-    this.clearConfirmationTimer();
-    this.confirmationTimer = setTimeout(() => {
-      if (!this.busy) return;
-      this.busy = false;
-      this.conflict = true;
-      this.message =
-        "Confirmation timed out. Draft retained; check incoming state and reload before trying again. No retry was sent.";
-      this.requestUpdate();
+    this.failed = false;
+    this.view = "list";
+    this.message = "Saving…";
+    this.clearTimer();
+    this.timer = setTimeout(() => {
+      if (this.busy)
+        this.failure(
+          new Error("Schedule confirmation timed out; no retry sent"),
+        );
     }, 20000);
-    this.closeDialog();
-    this.message =
-      "Awaiting confirmed incoming schedule. An empty acknowledgement is not confirmation.";
     try {
-      const r = await this.hass.callService("tuya_feeder", "set_schedule", {
-        entity_id: this.config.entity,
-        expected_revision: this.base,
-        meals: clone(this.sent),
-        ...(this.attrs.snapshot_source === "restored"
-          ? { acknowledge_restored_snapshot: true }
-          : {}),
-      });
-      if (r?.error && this.busy) {
-        this.clearConfirmationTimer();
-        this.busy = false;
-        this.conflict = true;
-        this.message = String(r.error);
-      } else if (this.busy) {
-        // A report can arrive before the handler rejects a stale revision.
-        // Wait for handler completion as well as an independently matching receipt.
+      const r = await this.hass.callService(
+        "tuya_feeder",
+        this.operation,
+        data,
+      );
+      if (!this.busy) return;
+      if (r?.error) this.failure(r.error);
+      else {
         this.serviceCompleted = true;
         this.hass = this.hass;
       }
     } catch (e) {
-      if (!this.busy) return;
-      this.clearConfirmationTimer();
-      this.busy = false;
-      this.conflict = true;
-      this.message = `Save failed: ${String(e)}. Reload before retrying.`;
+      if (this.busy) this.failure(e);
+    }
+  }
+  private get helper() {
+    return this.config.portions_entity
+      ? this._hass?.states[this.config.portions_entity]
+      : undefined;
+  }
+  private get selectedPortions() {
+    return this.config.portions_entity
+      ? Number(this.helper?.state)
+      : this.feedPortions;
+  }
+  private get feedBounds() {
+    if (!this.config.portions_entity) return { min: 1, max: 60 };
+    const h = this.helper;
+    if (
+      !h ||
+      ["unknown", "unavailable", ""].includes(h.state) ||
+      !Number.isInteger(Number(h.attributes.min)) ||
+      !Number.isInteger(Number(h.attributes.max))
+    )
+      return undefined;
+    return {
+      min: Math.max(1, Number(h.attributes.min)),
+      max: Math.min(60, Number(h.attributes.max)),
+    };
+  }
+  private get feedReady() {
+    const n = this.selectedPortions,
+      b = this.feedBounds;
+    return (
+      this.attrs.supports_manual_feed === true &&
+      !this.attrs.manual_feed_pending &&
+      (!this.hass.services || !!this.hass.services.tuya_feeder?.feed) &&
+      !!b &&
+      Number.isInteger(n) &&
+      n >= b.min &&
+      n <= b.max &&
+      !this.busy &&
+      !this.feedBusy &&
+      !this.helperBusy
+    );
+  }
+  private async selectFeed(delta: number) {
+    const b = this.feedBounds,
+      n = this.selectedPortions;
+    if (
+      !b ||
+      this.helperBusy ||
+      this.feedBusy ||
+      this.busy ||
+      !Number.isInteger(n) ||
+      n < b.min ||
+      n > b.max ||
+      n + delta < b.min ||
+      n + delta > b.max
+    )
+      return;
+    if (!this.config.portions_entity) {
+      this.feedPortions = n + delta;
+      return;
+    }
+    this.helperBusy = true;
+    try {
+      await this.hass.callService(
+        "input_number",
+        delta > 0 ? "increment" : "decrement",
+        {
+          entity_id: this.config.portions_entity,
+        },
+      );
+    } catch (e) {
+      console.error("Tuya feeder portions selection failed", e);
+      this.message = "Couldn’t change portions. Try again.";
+    } finally {
+      this.helperBusy = false;
+    }
+  }
+  private confirmFeed() {
+    if (!this.feedReady) return;
+    this.feedDose = this.selectedPortions;
+    this.view = "feed";
+    this.message = "";
+  }
+  private async feed() {
+    if (
+      !this.feedReady ||
+      !Number.isInteger(this.feedDose) ||
+      this.feedDose! < 1 ||
+      this.feedDose! > 60
+    )
+      return;
+    this.feedBusy = true;
+    this.view = "list";
+    this.message = "Feeding…";
+    try {
+      const r = await this.hass.callService("tuya_feeder", "feed", {
+        entity_id: this.config.entity,
+        portions: this.feedDose,
+      });
+      if (r?.error) throw new Error(String(r.error));
+      this.message = "Feed requested";
+    } catch (e) {
+      console.error("Tuya feeder manual feed failed", e);
+      this.message = "Couldn’t feed. Try again.";
+    } finally {
+      this.feedBusy = false;
+      this.feedDose = undefined;
     }
   }
   static getConfigElement() {
@@ -288,368 +511,353 @@ export class TuyaFeederCard extends LitElement {
     return { entity: "", title: "Feeder schedule", icon: "mdi:calendar-clock" };
   }
   getCardSize() {
-    return 2 + this.draft.length;
+    return 2 + this.baseline.length;
   }
   getGridOptions() {
     return { columns: 12, min_columns: 6 };
   }
-  private async openEditor(i: number) {
-    if (this.locked) return;
-    this.editing = i;
-    this.deleteConfirm = false;
-    await this.updateComplete;
-    this.renderRoot
-      .querySelector<HTMLDialogElement>("dialog[data-editor]")
-      ?.showModal();
-  }
-  private closeEditor() {
-    const i = this.editing;
-    this.renderRoot
-      .querySelector<HTMLDialogElement>("dialog[data-editor]")
-      ?.close();
-    this.editing = null;
-    this.deleteConfirm = false;
-    if (i !== null)
-      this.renderRoot
-        .querySelector<HTMLButtonElement>(`[data-meal="${i}"]`)
-        ?.focus();
-  }
-  private removeMeal() {
-    if (this.locked || this.editing === null || !this.deleteConfirm) return;
-    this.draft = this.draft.filter((_, i) => i !== this.editing);
-    this.dirty = !samePlan(this.draft, this.attrs.meals);
-    this.closeEditor();
+  private acknowledgement() {
+    return this.attrs.snapshot_source === "restored"
+      ? html`<label class="field"
+          ><span>Use saved plan?</span
+          ><input
+            type="checkbox"
+            aria-label="Use saved plan?"
+            .checked=${this.acknowledged}
+            ?disabled=${this.locked}
+            @change=${(e: Event) => (this.acknowledged = (e.target as HTMLInputElement).checked)}
+        /></label>`
+      : nothing;
   }
   render() {
     if (!this.config) return nothing;
     const i = this.editing,
       m = i === null ? undefined : this.draft[i];
-    return html`<ha-card>
-      <header>
-        <div>
-          <h2>${this.config.title ?? "Feeder schedule"}</h2>
-          <small>Device-owned · Every day</small>
-        </div>
-        <button
-          class="info"
-          aria-label="Schedule information"
-          @click=${() => (this.infoOpen = !this.infoOpen)}
-        >
-          <svg
-            aria-hidden="true"
-            viewBox="0 0 24 24"
-            width="22"
-            height="22"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="1.8"
-          >
-            <circle cx="12" cy="12" r="9" />
-            <path d="M12 10v7" />
-            <circle cx="12" cy="7" r=".8" fill="currentColor" stroke="none" />
-          </svg>
-        </button>
-      </header>
+    return html`<ha-card
+      part="card"
+      @keydown=${(e: KeyboardEvent) => {
+        if (e.key === "Escape" && this.view !== "list") {
+          e.preventDefault();
+          this.cancel();
+        }
+      }}
+    >
       ${
-        this.infoOpen
-          ? html`<aside>
-              <p>
-                Last locally reported snapshot, not an active query. External
-                app changes may be stale until a new local report.
-              </p>
-              <p>
-                Source: ${this.attrs.snapshot_source ?? "unknown"} · Revision:
-                ${this.attrs.revision ?? 0}<br />Received:
-                ${this.attrs.last_received_at ?? "Not yet received"}
-              </p>
-              <p>
-                Saved sources are manually trusted HA metadata, not fresh device
-                evidence. Import a selected passive LAN DP1 sensor with the
-                integration's Import snapshot action.
-              </p>
-            </aside>`
-          : nothing
-      }
-      <section aria-label="Schedule draft" ?inert=${this.busy}>
-        ${this.draft.map(
-          (meal, n) =>
-            html`<div class="meal">
-              <button
-                class="open"
-                data-meal=${n}
-                aria-label=${`Edit meal ${n + 1}`}
-                ?disabled=${this.locked}
-                @click=${() => this.openEditor(n)}
+        this.view === "list"
+          ? html` ${this.config.manual_feed ? html`<div part="manual-feed row" class="manual"><ha-icon .icon=${this.config.feed_icon ?? "mdi:food-drumstick"}></ha-icon><span class="feed-name">${this.config.feed_title ?? "Feeder"}</span><button part="control" aria-label="Decrease feeding portions" ?disabled=${!this.feedBounds || !Number.isInteger(this.selectedPortions) || this.selectedPortions <= this.feedBounds.min || this.helperBusy || this.feedBusy || this.busy} @click=${() => this.selectFeed(-1)}>−</button><output aria-label="Feeding portions">${Number.isInteger(this.selectedPortions) && this.feedBounds && this.selectedPortions >= this.feedBounds.min && this.selectedPortions <= this.feedBounds.max ? this.selectedPortions : "—"}</output><button part="control" aria-label="Increase feeding portions" ?disabled=${!this.feedBounds || !Number.isInteger(this.selectedPortions) || this.selectedPortions >= this.feedBounds.max || this.helperBusy || this.feedBusy || this.busy} @click=${() => this.selectFeed(1)}>+</button><button class="accent feed" ?disabled=${!this.feedReady} @click=${this.confirmFeed}>Feed</button></div>` : nothing}
+              <header part="header">
+                <ha-icon
+                  .icon=${this.config.icon ?? "mdi:calendar-clock"}
+                ></ha-icon>
+                <h2 part="title">${this.config.title ?? "Feeder schedule"}</h2>
+                ${this.writable || this.busy || this.failed || this.conflict ? html`<button part="add control" class="add" aria-label="Add meal" title="Add meal" ?disabled=${this.locked || this.failed || this.baseline.length >= Math.min(10, this.attrs.max_meals)} @click=${this.add}><ha-icon icon="mdi:plus"></ha-icon></button>` : nothing}
+              </header>
+              <section
+                aria-label="Meal schedule"
+                ?inert=${this.busy || this.feedBusy}
               >
-                <span class="time">${meal.time}</span
-                ><span class="detail"
-                  >Every day ·
-                  <span aria-label=${`Portions ${n + 1}`}
-                    >${meal.portions}</span
-                  >
-                  portion${meal.portions === 1 ? "" : "s"}</span
-                >
-              </button>
-              <input
-                class="switch"
-                type="checkbox"
-                role="switch"
-                aria-label=${`Enabled ${n + 1}`}
-                ?disabled=${this.locked}
-                .checked=${meal.enabled === true}
-                @change=${(e: Event) => this.edit(n, "enabled", (e.target as HTMLInputElement).checked)}
-              />
-            </div>`,
-        )}
-        <button
-          class="add accent"
-          aria-label="Add disabled meal"
-          ?disabled=${this.locked || this.draft.length >= Math.min(10, this.attrs.max_meals ?? 10)}
-          @click=${this.add}
-        >
-          Add meal
-        </button>
-      </section>
-      <div class="status" role="status">
-        ${this.message || (this.busy ? "Awaiting device report…" : this.dirty ? "Unsaved changes" : this.attrs.snapshot_source === "restored" ? "Saved schedule · confirmation required to overwrite" : this.writable ? "Changes stay local until Save" : "No editable snapshot · see information")}
-      </div>
-      ${this.dirty || this.conflict ? html`<footer><button @click=${this.reset} ?disabled=${this.busy}>${this.conflict ? "Reload schedule" : "Reset draft"}</button>${this.dirty ? html`<button data-save class="accent" ?disabled=${!this.saveable} @click=${this.review}>Save</button>` : nothing}</footer>` : nothing}
-      ${
-        m && i !== null
-          ? html`<dialog
-              data-editor
-              aria-labelledby="editor-title"
-              @cancel=${(e: Event) => {
-                e.preventDefault();
-                this.closeEditor();
-              }}
-            >
-              <h2 id="editor-title">Edit meal</h2>
-              <fieldset ?disabled=${this.locked}>
-                <label class="field"
-                  >Time<input
-                    type="time"
-                    aria-label=${`Time ${i + 1}`}
-                    .value=${m.time}
-                    @input=${(e: Event) => this.edit(i, "time", (e.target as HTMLInputElement).value)}
-                /></label>
-                <div class="field">
-                  <span>Portions</span>
-                  <div class="stepper">
-                    <button
-                      aria-label=${`Decrease portions ${i + 1}`}
-                      ?disabled=${m.portions <= 1}
-                      @click=${() => this.edit(i, "portions", m.portions - 1)}
-                    >
-                      −</button
-                    ><output>${m.portions}</output
-                    ><button
-                      aria-label=${`Increase portions ${i + 1}`}
-                      ?disabled=${m.portions >= Math.min(60, this.attrs.max_portions ?? 60)}
-                      @click=${() => this.edit(i, "portions", m.portions + 1)}
-                    >
-                      +
-                    </button>
-                  </div>
-                </div>
-                <label class="field"
-                  >Enabled<input
-                    class="switch"
-                    type="checkbox"
-                    role="switch"
-                    aria-label="Meal enabled"
-                    .checked=${m.enabled === true}
-                    @change=${(e: Event) => this.edit(i, "enabled", (e.target as HTMLInputElement).checked)}
-                /></label>
-                <div class="field">
-                  <span>Repeat</span><span>Every day</span>
-                </div>
                 ${
-                  this.deleteConfirm
-                    ? html`<p>
-                          Remove this meal from the draft? The device is
-                          unchanged until Confirm Save.
-                        </p>
-                        <div class="dialog-actions">
-                          <button @click=${() => (this.deleteConfirm = false)}>
-                            Keep meal</button
-                          ><button class="danger" @click=${this.removeMeal}>
-                            Confirm Delete
-                          </button>
-                        </div>`
-                    : html`<button
-                        class="danger delete"
-                        @click=${() => (this.deleteConfirm = true)}
-                      >
-                        Delete meal
-                      </button>`
+                  this.writable || this.busy || this.failed || this.conflict
+                    ? this.baseline.map(
+                        (meal, n) =>
+                          html`<div class="meal" part="meal row">
+                            <button
+                              part="meal-button"
+                              class="open"
+                              data-meal=${n}
+                              aria-label=${`Edit meal ${n + 1}`}
+                              ?disabled=${this.locked || this.failed}
+                              @click=${() => this.openEditor(n)}
+                            >
+                              <span class="time" part="meal-time"
+                                >${meal.time}</span
+                              ><span class="detail"
+                                >Every day ·
+                                <span aria-label=${`Portions ${n + 1}`}
+                                  >${meal.portions}</span
+                                >
+                                portion${meal.portions === 1 ? "" : "s"}</span
+                              ></button
+                            ><input
+                              part="switch control"
+                              class="switch"
+                              type="checkbox"
+                              role="switch"
+                              aria-label=${`Enabled ${n + 1}`}
+                              .checked=${meal.enabled}
+                              ?disabled=${this.locked || this.failed}
+                              @change=${(e: Event) => this.openEditor(n, (e.target as HTMLInputElement).checked)}
+                            />
+                          </div>`,
+                      )
+                    : html`<div class="unavailable">Schedule unavailable</div>`
                 }
-              </fieldset>
-              <div class="dialog-actions">
-                <button class="accent" @click=${this.closeEditor}>Done</button>
-              </div>
-            </dialog>`
-          : nothing
+                ${!this.writable && !this.busy && !this.failed && !this.conflict ? html`<button @click=${this.reset}>Retry</button>` : nothing}
+              </section>`
+          : this.view === "feed"
+            ? html`<header part="header">
+                  <h2 part="title">
+                    Feed ${this.feedDose}
+                    portion${this.feedDose === 1 ? "" : "s"}?
+                  </h2>
+                </header>
+                <div class="actions">
+                  <button @click=${this.cancel}>Cancel</button
+                  ><button
+                    class="accent"
+                    ?disabled=${!this.feedReady}
+                    @click=${this.feed}
+                  >
+                    Feed
+                  </button>
+                </div>`
+            : this.view === "delete"
+              ? html`<header part="header">
+                    <h2 part="title">Delete meal?</h2>
+                  </header>
+                  <p>
+                    ${m?.time} · ${m?.portions}
+                    portion${m?.portions === 1 ? "" : "s"}
+                  </p>
+                  ${this.acknowledgement()}
+                  <div class="actions">
+                    <button @click=${this.cancel}>Cancel</button
+                    ><button
+                      class="danger"
+                      ?disabled=${this.locked || (this.attrs.snapshot_source === "restored" && !this.acknowledged)}
+                      @click=${() => this.save(true)}
+                    >
+                      Delete
+                    </button>
+                  </div>`
+              : m && i !== null
+                ? html` <header part="header" class="edit-header">
+                      <button data-back aria-label="Back" @click=${this.cancel}>
+                        <ha-icon icon="mdi:chevron-left"></ha-icon
+                        ><span>Back</span>
+                      </button>
+                      <h2 part="title">
+                        ${this.operation === "add_meal" ? "Add meal" : "Edit meal"}
+                      </h2>
+                      <button
+                        part="save control"
+                        class="accent"
+                        data-save
+                        ?disabled=${!this.saveable}
+                        @click=${() => this.save()}
+                      >
+                        Save
+                      </button>
+                    </header>
+                    <section aria-label="Edit meal">
+                      <label class="field"
+                        ><span>Time</span
+                        ><input
+                          type="time"
+                          aria-label=${`Time ${i + 1}`}
+                          .value=${m.time}
+                          ?disabled=${this.locked}
+                          @input=${(e: Event) => this.edit("time", (e.target as HTMLInputElement).value)}
+                      /></label>
+                      <div class="field">
+                        <span>Portions</span>
+                        <div part="stepper" class="stepper">
+                          <button
+                            part="control"
+                            aria-label=${`Decrease portions ${i + 1}`}
+                            ?disabled=${this.locked || m.portions <= 1}
+                            @click=${() => this.edit("portions", m.portions - 1)}
+                          >
+                            −</button
+                          ><output aria-label=${`Portions ${i + 1}`}
+                            >${m.portions}</output
+                          ><button
+                            part="control"
+                            aria-label=${`Increase portions ${i + 1}`}
+                            ?disabled=${this.locked || m.portions >= Math.min(60, this.attrs.max_portions)}
+                            @click=${() => this.edit("portions", m.portions + 1)}
+                          >
+                            +
+                          </button>
+                        </div>
+                      </div>
+                      <label class="field"
+                        ><span>Enabled</span
+                        ><input
+                          part="switch control"
+                          class="switch"
+                          type="checkbox"
+                          role="switch"
+                          aria-label="Meal enabled"
+                          .checked=${m.enabled}
+                          ?disabled=${this.locked}
+                          @change=${(e: Event) => this.edit("enabled", (e.target as HTMLInputElement).checked)}
+                      /></label>
+                      <div class="field">
+                        <span>Repeat</span><span class="detail">Every day</span>
+                      </div>
+                      ${this.acknowledgement()}${this.operation !== "add_meal" ? html`<button class="danger delete" @click=${() => (this.view = "delete")}>Delete meal</button>` : nothing}
+                    </section>`
+                : nothing
       }
-      ${
-        this.dialogOpen
-          ? html`<dialog
-              data-review
-              aria-labelledby="confirm-title"
-              @cancel=${(e: Event) => {
-                e.preventDefault();
-                this.closeDialog();
-              }}
-            >
-              <h2 id="confirm-title">Replace device schedule?</h2>
-              <p>
-                The complete plan below replaces the device plan. No immediate
-                feeding command is sent.
-              </p>
-              ${this.attrs.snapshot_source === "restored" ? html`<p class="historical">Based on saved schedule from ${this.attrs.last_received_at}. External app changes could be overwritten. Confirm Save explicitly accepts this historical baseline.</p>` : nothing}
-              <ol>
-                ${this.draft.map((meal) => html`<li>Every day · ${meal.time} · ${meal.portions} portion${meal.portions === 1 ? "" : "s"} · ${meal.enabled ? "Enabled" : "Disabled"}</li>`)}
-              </ol>
-              <div class="dialog-actions">
-                <button data-cancel @click=${this.closeDialog}>Cancel</button
-                ><button
-                  class="accent"
-                  ?disabled=${!this.saveable}
-                  @click=${this.confirm}
-                >
-                  Confirm Save
-                </button>
-              </div>
-            </dialog>`
-          : nothing
-      }
+      ${this.message ? html`<div part="status" class="status" role="status">${this.message}</div>` : nothing}
+      ${this.conflict ? html`<button @click=${this.reset}>Reload</button>` : this.failed ? html`<div class="actions"><button @click=${this.reset}>Cancel</button><button ?disabled=${!this.writable} @click=${this.retry}>Try again</button></div>` : nothing}
     </ha-card>`;
   }
   static styles = css`
     :host {
       display: block;
       color: var(--primary-text-color, #222);
-      font-family: var(--ha-font-family-body, system-ui);
-      font-size: 14px;
+      font-family: var(
+        --feeder-font-family,
+        var(--ha-font-family-body, system-ui)
+      );
+      font-size: 15px;
+      --accent: var(--feeder-accent-color, var(--primary-color, #03a9f4));
+      --control: max(44px, var(--feeder-control-size, 44px));
     }
     * {
       box-sizing: border-box;
     }
     ha-card {
       display: block;
-      padding: 18px;
-      background: var(--card-background-color, var(--ha-card-background, #fff));
-      border-radius: var(--ha-card-border-radius, 20px);
-      border: 1px solid var(--divider-color, #ddd);
+      padding: 14px;
+      background: var(
+        --feeder-card-background,
+        var(--ha-card-background, var(--card-background-color, #fff))
+      );
+      border-radius: var(
+        --feeder-border-radius,
+        var(--ha-card-border-radius, 20px)
+      );
+      border: var(--ha-card-border-width, 1px) solid
+        var(--ha-card-border-color, var(--divider-color, #ddd));
+      box-shadow: var(--ha-card-box-shadow, none);
     }
     header {
       display: flex;
       align-items: center;
-      justify-content: space-between;
-      margin-bottom: 20px;
-      gap: 12px;
+      gap: 14px;
+      min-height: 48px;
+      margin-bottom: 12px;
     }
     h2 {
-      font-size: 23px;
-      letter-spacing: -0.6px;
-      margin: 0 0 6px;
-      font-weight: 600;
+      margin: 0;
+      font-size: var(--feeder-header-font-size, 18px);
+      font-weight: 500;
+      color: var(--primary-text-color, #222);
+      line-height: 1.3;
     }
-    small,
-    .status,
-    .detail {
-      color: var(--secondary-text-color, #666);
-    }
-    .info {
-      font-size: 22px;
-      width: 44px;
-      padding: 0;
+    ha-icon {
+      --mdc-icon-size: 20px;
+      width: 20px;
+      height: 20px;
       flex-shrink: 0;
+      color: var(--secondary-text-color, #777);
+    }
+    header > ha-icon {
+      --mdc-icon-size: 25px;
+      width: 45px;
+      height: 45px;
+      padding: 10px;
+      border-radius: 50%;
+      background: var(--feeder-header-icon-background, var(--accent));
+      color: var(--feeder-header-icon-color, var(--text-primary-color, #fff));
     }
     .meal {
       display: flex;
       align-items: center;
-      gap: 12px;
-      border: 1px solid var(--divider-color, #ddd);
-      background: var(--secondary-background-color, #f9f9fb);
-      border-radius: 20px;
-      margin: 10px 0;
+      gap: 8px;
+      border-radius: var(
+        --feeder-border-radius,
+        var(--ha-card-border-radius, 20px)
+      );
+      background: var(
+        --feeder-row-background,
+        color-mix(in srgb, var(--primary-text-color, #222) 4.5%, transparent)
+      );
+      margin: 8px 0;
       overflow: hidden;
     }
     .open {
       flex: 1;
       min-width: 0;
       text-align: left;
-      padding: 18px 20px;
+      padding: 16px;
       border-radius: 0;
     }
     .time {
       display: block;
-      font-size: 34px;
-      letter-spacing: -1px;
+      font-size: var(--feeder-meal-time-font-size, 32px);
+      font-weight: 500;
+      letter-spacing: -1.5px;
       line-height: 1.15;
       font-variant-numeric: tabular-nums;
     }
+    .detail,
+    .status,
+    .unavailable {
+      color: var(--secondary-text-color, #777);
+    }
     .detail {
-      display: block;
       font-size: 13px;
-      margin-top: 7px;
+    }
+    .open .detail {
+      display: block;
+      margin-top: 6px;
     }
     button {
-      min-height: 44px;
+      min-height: var(--control);
+      min-width: 44px;
       border: 0;
-      border-radius: 24px;
+      border-radius: 12px;
       background: transparent;
       color: inherit;
       font: inherit;
-      padding: 10px 16px;
+      font-weight: 500;
+      padding: 10px 14px;
       cursor: pointer;
       touch-action: manipulation;
-      transition: none;
-      transform: none;
     }
-    button:disabled {
-      opacity: 0.4;
+    button:disabled,
+    input:disabled {
+      opacity: 0.28;
       cursor: default;
     }
     button:focus-visible,
     input:focus-visible {
-      outline: 2px solid var(--primary-color, #f4a631);
+      outline: 2px solid var(--accent);
       outline-offset: 2px;
     }
     .accent {
-      background: var(--primary-color, #f4a631);
-      color: var(--text-primary-color, #241907);
-      font-weight: 600;
+      background: var(--accent);
+      color: var(--text-primary-color, #fff);
     }
     .add {
-      width: 100%;
-      margin-top: 16px;
+      width: var(--control);
+      height: var(--control);
+      padding: 0;
+      margin-left: auto;
+      flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--accent);
+    }
+    .add ha-icon {
+      color: inherit;
     }
     .status {
-      font-size: 12px;
+      font-size: 13px;
       line-height: 1.5;
-      margin-top: 14px;
-      min-height: 18px;
-      overflow-wrap: anywhere;
-    }
-    footer {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
       margin-top: 12px;
-      gap: 10px;
-    }
-    footer > button:first-child {
-      color: var(--secondary-text-color, #666);
     }
     .switch {
       appearance: none;
       width: 49px;
-      height: 44px;
+      height: var(--control);
       flex: 0 0 49px;
-      margin: 0 18px 0 0;
-      border-radius: 22px;
+      margin: 0 14px 0 0;
       background: linear-gradient(
           var(--disabled-text-color, #aaa),
           var(--disabled-text-color, #aaa)
@@ -657,122 +865,141 @@ export class TuyaFeederCard extends LitElement {
         center/49px 30px no-repeat;
       position: relative;
       cursor: pointer;
+      border: 0;
+      border-radius: 22px;
     }
     .switch:after {
       content: "";
       position: absolute;
       left: 3px;
-      top: 10px;
+      top: calc(50% - 12px);
       width: 24px;
       height: 24px;
       border-radius: 50%;
-      background: white;
+      background: #fff;
     }
     .switch:checked {
-      background: linear-gradient(
-          var(--primary-color, #f4a631),
-          var(--primary-color, #f4a631)
-        )
-        center/49px 30px no-repeat;
+      background: linear-gradient(var(--accent), var(--accent)) center/49px 30px
+        no-repeat;
     }
     .switch:checked:after {
       left: 22px;
-    }
-    .switch:disabled {
-      opacity: 0.4;
-      cursor: default;
-    }
-    dialog {
-      width: 380px;
-      max-width: calc(100vw - 30px);
-      max-height: calc(100dvh - 30px);
-      overflow: auto;
-      padding: 22px;
-      border: 1px solid var(--divider-color, #ddd);
-      border-radius: 24px;
-      background: var(--card-background-color, #fff);
-      color: inherit;
-    }
-    dialog::backdrop {
-      background: #0007;
-    }
-    dialog h2 {
-      font-size: 21px;
-      margin: 0 0 20px;
     }
     .field {
       display: flex;
       align-items: center;
       justify-content: space-between;
-      padding: 15px 0;
+      padding: 16px 0;
       border-bottom: 1px solid var(--divider-color, #ddd);
       gap: 12px;
     }
-    fieldset {
-      border: 0;
+    .field .switch {
       margin: 0;
-      padding: 0;
-      min-width: 0;
     }
     input[type="time"] {
       color: inherit;
       background: transparent;
       border: 1px solid var(--divider-color, #ddd);
-      border-radius: 10px;
+      border-radius: 12px;
       padding: 8px;
       font: inherit;
-      min-height: 44px;
-      max-width: 160px;
+      min-height: var(--control);
+      max-width: 155px;
+    }
+    input[type="checkbox"]:not(.switch) {
+      width: 44px;
+      height: 44px;
+      margin: 0;
+      accent-color: var(--accent);
     }
     .stepper {
       display: flex;
       align-items: center;
       gap: 8px;
     }
-    .stepper button {
-      width: 44px;
-      height: 44px;
+    .stepper button,
+    .manual > button:not(.feed) {
+      width: var(--control);
+      height: var(--control);
       padding: 0;
       font-size: 22px;
-      background: var(--secondary-background-color, #f2f2f7);
+      background: var(
+        --feeder-row-background,
+        color-mix(in srgb, var(--primary-text-color, #222) 4.5%, transparent)
+      );
     }
-    .stepper output {
-      min-width: 24px;
+    output {
+      min-width: 28px;
       text-align: center;
-      font-size: 20px;
+      font-size: 24px;
+      font-weight: 500;
       font-variant-numeric: tabular-nums;
     }
-    .field .switch {
-      margin: 0;
-    }
     .danger {
-      color: var(--error-color, #d83232);
+      color: var(--error-color, #db4437);
     }
     .delete {
       width: 100%;
       text-align: left;
-      margin: 10px 0;
+      margin-top: 12px;
     }
-    .dialog-actions {
+    .actions {
       display: flex;
       justify-content: flex-end;
       gap: 10px;
       margin-top: 16px;
     }
-    p,
-    li {
-      line-height: 1.6;
-      overflow-wrap: anywhere;
+    .edit-header {
+      justify-content: space-between;
+      gap: 6px;
     }
-    ol {
-      padding-left: 20px;
+    .edit-header [data-back] {
+      display: flex;
+      align-items: center;
+      padding-left: 0;
+      gap: 2px;
     }
-    aside {
-      font-size: 12px;
-      color: var(--secondary-text-color, #666);
+    .edit-header [data-back] ha-icon {
+      color: inherit;
+    }
+    .manual {
+      display: grid;
+      grid-template-columns:
+        18px minmax(28px, 1fr) var(--control) 32px var(--control)
+        minmax(64px, 1fr);
+      column-gap: 4px;
+      align-items: center;
+      min-height: 68px;
+      margin: -4px -4px 12px;
+      padding: 10px 0;
+    }
+    .manual ha-icon {
+      --mdc-icon-size: 18px;
+      width: 18px;
+      height: 18px;
+    }
+    .feed-name {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-size: 15px;
+    }
+    .manual output {
+      font-size: 32px;
+      letter-spacing: -2px;
+    }
+    .manual .feed {
+      margin-left: 8px;
+      padding: 8px;
+    }
+    .unavailable {
+      padding: 16px 0;
     }
     [inert] {
       pointer-events: none;
+    }
+    p {
+      color: var(--secondary-text-color, #777);
     }
   `;
 }
@@ -784,6 +1011,24 @@ class TuyaFeederCardEditor extends LitElement {
     this.config = { ...c };
   }
   render() {
+    const labels: Record<string, string> = {
+      entity: "Schedule sensor",
+      title: "Title",
+      icon: "Icon",
+      manual_feed: "Show manual feeding",
+      feed_title: "Feeding title",
+      feed_icon: "Feeding icon",
+      portions_entity: "Portions helper (optional)",
+      appearance: "Appearance",
+      accent_color: "Accent color",
+      border_radius: "Corner radius",
+      font_family: "Font family",
+      header_font_size: "Header size",
+      meal_time_font_size: "Meal time size",
+      row_background: "Row color",
+      card_background: "Card color",
+      control_size: "Control size (minimum 44px)",
+    };
     return html`<ha-form
       .hass=${this.hass}
       .data=${this.config}
@@ -791,14 +1036,30 @@ class TuyaFeederCardEditor extends LitElement {
         {
           name: "entity",
           required: true,
-          selector: { entity: { domain: "sensor" } },
+          selector: {
+            entity: { domain: "sensor", integration: "tuya_feeder" },
+          },
         },
         { name: "title", selector: { text: {} } },
         { name: "icon", selector: { icon: {} } },
+        { name: "manual_feed", selector: { boolean: {} } },
+        { name: "feed_title", selector: { text: {} } },
+        { name: "feed_icon", selector: { icon: {} } },
+        {
+          name: "portions_entity",
+          selector: { entity: { domain: "input_number" } },
+        },
+        {
+          name: "appearance",
+          type: "expandable",
+          schema: APPEARANCE.map((name) => ({ name, selector: { text: {} } })),
+        },
       ]}
-      .computeLabel=${(s: { name: string }) => (s.name === "entity" ? "Schedule sensor" : s.name === "title" ? "Title" : "Icon")}
+      .computeLabel=${(s: { name: string }) => labels[s.name] ?? s.name}
       @value-changed=${(e: CustomEvent) => {
-        this.config = { ...this.config, ...e.detail.value };
+        const c = { ...this.config, ...e.detail.value };
+        safeAppearance(c.appearance);
+        this.config = c;
         this.dispatchEvent(
           new CustomEvent("config-changed", {
             detail: { config: this.config },
@@ -816,8 +1077,7 @@ const w = window as unknown as { customCards: unknown[] };
 w.customCards = w.customCards || [];
 w.customCards.push({
   type: "tuya-feeder-card",
-  name: "Tuya Feeder Schedule",
-  description:
-    "Draft and confirm a device-owned daily schedule. No feed actions.",
+  name: "Tuya Feeder",
+  description: "Daily meals with in-card editing and optional manual feeding.",
   documentationURL: "https://github.com/myevit/tuya-feeder-card",
 });

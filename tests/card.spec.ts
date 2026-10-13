@@ -1,272 +1,232 @@
 import { test, expect } from "@playwright/test";
-const days = [
-  "monday",
-  "tuesday",
-  "wednesday",
-  "thursday",
-  "friday",
-  "saturday",
-  "sunday",
-];
-export const attrs = {
-  meals: [
-    { days, time: "08:15", portions: 3, enabled: true },
-    { days, time: "19:45", portions: 2, enabled: false },
-  ],
-  revision: 1,
-  last_received_at: "2026-01-01T00:00:00Z",
-  observation_kind:
-    "last locally reported snapshot; not an active schedule query",
-  schedule_valid: true,
-  snapshot_source: "received",
-  pending: false,
-  error: null,
-  supports_schedule_write: true,
-  supported_days_mode: "every_day",
-  max_meals: 10,
-  max_portions: 60,
-};
-async function setup(page: any, a: any = attrs) {
-  await page.goto("/");
-  await page.evaluate(async (a: any) => {
-    await customElements.whenDefined("tuya-feeder-card");
-    (window as any).calls = [];
-    const c: any = document.createElement("tuya-feeder-card");
-    c.setConfig({
-      type: "custom:tuya-feeder-card",
-      entity: "sensor.mock_feeder",
-      title: "Feeder schedule",
-    });
-    c.hass = {
-      states: { "sensor.mock_feeder": { state: "ready", attributes: a } },
-      callService: async (...args: any[]) => {
-        (window as any).calls.push(args);
-        return {};
-      },
-    };
-    document.body.append(c);
-  }, a);
-}
-async function open(page: any, i = 1) {
-  if (!(await page.locator("dialog[data-editor]").count()))
-    await page
-      .getByRole("button", { name: `Edit meal ${i}`, exact: true })
-      .click();
-}
-async function done(page: any) {
-  if (await page.locator("dialog[data-editor]").count())
-    await page.getByRole("button", { name: "Done", exact: true }).click();
-}
-async function calls(page: any) {
-  return page.evaluate(() => (window as any).calls);
-}
-async function incoming(page: any, a: any) {
-  await page.evaluate((a: any) => {
+import { attrs, setup, calls } from "./fixtures";
+const open = (page: any) =>
+  page.getByRole("button", { name: "Edit meal 1", exact: true }).click();
+const plus = (page: any) =>
+  page.getByRole("button", { name: "Increase portions 1" }).click();
+const save = (page: any) =>
+  page.getByRole("button", { name: "Save", exact: true }).click();
+const changed = () =>
+  attrs.meals.map((m, i) => ({ ...m, portions: i === 0 ? 4 : m.portions }));
+const incoming = (page: any, a: any) =>
+  page.evaluate((a: any) => {
     const c: any = document.querySelector("tuya-feeder-card");
     c.hass = {
       ...c.hass,
       states: { "sensor.mock_feeder": { state: "ready", attributes: a } },
     };
   }, a);
-}
-test("one complete payload; empty ACK stays busy; genuine report confirms", async ({
+
+test("one logical update, unchanged rows preserved, empty ACK remains busy until matching fresh report", async ({
   page,
 }) => {
   await setup(page);
   await open(page);
-  await page.getByRole("button", { name: "Increase portions 1" }).click();
-  await done(page);
-  await page.getByRole("button", { name: "Save", exact: true }).click();
-  await page.getByRole("button", { name: "Confirm Save" }).click();
-  const meals = structuredClone(attrs.meals);
-  meals[0].portions = 4;
+  await plus(page);
+  await save(page);
+  await expect(page.getByLabel("Time 1", { exact: true })).toHaveCount(0);
+  await expect(page.locator("section")).toHaveAttribute("inert", "");
   expect(await calls(page)).toEqual([
     [
       "tuya_feeder",
-      "set_schedule",
-      { entity_id: "sensor.mock_feeder", expected_revision: 1, meals },
+      "update_meal",
+      {
+        entity_id: "sensor.mock_feeder",
+        expected_revision: 1,
+        meal_index: 0,
+        meal: changed()[0],
+      },
     ],
   ]);
-  await expect(
-    page.getByRole("button", { name: "Save", exact: true }),
-  ).toBeDisabled();
-  await expect(page.locator("section")).toHaveAttribute("inert", "");
-  await incoming(page, {
-    ...attrs,
-    revision: 2,
-    meals,
-    schedule_valid: false,
-  });
-  await expect(page.locator("section")).toHaveAttribute("inert", "");
-  await incoming(page, {
-    ...attrs,
-    revision: 2,
-    meals,
-    last_received_at: "2026-01-01T00:01:00Z",
-  });
-  await expect(page.locator(".status")).toContainText("confirmed by incoming");
-  expect((await calls(page)).length).toBe(1);
-});
-test("pending transient errors and old receipts never complete Save", async ({
-  page,
-}) => {
-  await setup(page);
-  await open(page);
-  await page.getByRole("button", { name: "Increase portions 1" }).click();
-  await done(page);
-  await page.getByRole("button", { name: "Save", exact: true }).click();
-  await page.getByRole("button", { name: "Confirm Save" }).click();
-  const meals = structuredClone(attrs.meals);
-  meals[0].portions = 4;
   await incoming(page, { ...attrs, pending: true, error: "transient report" });
-  await expect(page.locator("section")).toHaveAttribute("inert", "");
-  await incoming(page, { ...attrs, meals });
-  await expect(page.locator("section")).toHaveAttribute("inert", "");
-  await incoming(page, { ...attrs, meals, revision: 2 });
-  await expect(page.locator("section")).toHaveAttribute("inert", "");
+  await expect(page.locator(".status")).toHaveText("Saving…");
+  for (const a of [
+    { ...attrs, meals: changed() },
+    { ...attrs, revision: 2, meals: changed() },
+    {
+      ...attrs,
+      revision: 2,
+      meals: changed(),
+      schedule_valid: false,
+      last_received_at: "2026-01-01T00:01:00Z",
+    },
+    {
+      ...attrs,
+      revision: 2,
+      meals: changed(),
+      snapshot_source: "restored",
+      last_received_at: "2026-01-01T00:01:00Z",
+    },
+  ]) {
+    await incoming(page, a);
+    await expect(page.locator(".status")).toHaveText("Saving…");
+  }
   await incoming(page, {
     ...attrs,
-    meals,
     revision: 2,
+    meals: changed(),
     last_received_at: "2026-01-01T00:01:00Z",
   });
-  await expect(page.locator(".status")).toContainText("confirmed by incoming");
-});
-test("missing HA updates time out without retry or discarding draft", async ({
-  page,
-}) => {
-  await page.clock.install();
-  await setup(page);
-  await open(page);
-  await page.getByRole("button", { name: "Increase portions 1" }).click();
-  await done(page);
-  await page.getByRole("button", { name: "Save", exact: true }).click();
-  await page.getByRole("button", { name: "Confirm Save" }).click();
-  await page.clock.fastForward(21000);
-  await expect(page.locator(".status")).toContainText("Confirmation timed out");
-  await expect(page.locator("section")).not.toHaveAttribute("inert", "");
+  await expect(page.locator(".status")).toHaveText("Saved");
   await expect(page.getByLabel("Portions 1", { exact: true })).toHaveText("4");
+  await expect(page.getByLabel("Portions 2", { exact: true })).toHaveText("2");
   expect((await calls(page)).length).toBe(1);
 });
-test("matching report before service completion cannot hide backend rejection", async ({
+
+test("matching report before handler rejection cannot show success or leak technical error", async ({
   page,
 }) => {
   await setup(page);
   await page.evaluate(() => {
-    const card: any = document.querySelector("tuya-feeder-card");
-    card.hass.callService = (...args: any[]) => {
-      (window as any).calls.push(args);
-      return new Promise((_resolve, reject) => {
+    const c: any = document.querySelector("tuya-feeder-card");
+    c.hass.callService = (...a: any[]) => {
+      (window as any).calls.push(a);
+      return new Promise((_, reject) => {
         (window as any).rejectSave = reject;
       });
     };
   });
   await open(page);
-  await page.getByRole("button", { name: "Increase portions 1" }).click();
-  await done(page);
-  await page.getByRole("button", { name: "Save", exact: true }).click();
-  await page.getByRole("button", { name: "Confirm Save" }).click();
-  const meals = structuredClone(attrs.meals);
-  meals[0].portions = 4;
+  await plus(page);
+  await save(page);
   await incoming(page, {
     ...attrs,
-    meals,
     revision: 2,
+    meals: changed(),
     last_received_at: "2026-01-01T00:01:00Z",
   });
-  await expect(page.locator("section")).toHaveAttribute("inert", "");
+  await expect(page.locator(".status")).toHaveText("Saving…");
   await page.evaluate(() =>
-    (window as any).rejectSave(new Error("Stale revision")),
+    (window as any).rejectSave(new Error("Stale revision private details")),
   );
-  await expect(page.locator(".status")).toContainText("Stale revision");
-  await expect(page.locator(".status")).not.toContainText(
-    "confirmed by incoming",
-  );
+  await expect(page.locator(".status")).toHaveText("Couldn’t save. Try again.");
+  await expect(page.locator("ha-card")).not.toContainText("private details");
   expect((await calls(page)).length).toBe(1);
 });
-test("reverted draft sends nothing", async ({ page }) => {
+
+test("watchdog retains edit; explicit retry reopens it and never automatically resends", async ({
+  page,
+}) => {
+  await page.clock.install();
   await setup(page);
   await open(page);
-  await page.getByRole("button", { name: "Increase portions 1" }).click();
-  await page.getByRole("button", { name: "Decrease portions 1" }).click();
+  await plus(page);
+  await save(page);
+  await page.clock.fastForward(21000);
+  await expect(page.locator(".status")).toHaveText("Couldn’t save. Try again.");
+  expect((await calls(page)).length).toBe(1);
+  await page.getByRole("button", { name: "Try again", exact: true }).click();
+  await expect(page.getByLabel("Portions 1", { exact: true })).toHaveText("4");
+  expect((await calls(page)).length).toBe(1);
+  await save(page);
+  expect((await calls(page)).length).toBe(2);
+});
+
+test("revision change even without dirty fields aborts editor and cannot delete shifted index", async ({
+  page,
+}) => {
+  await setup(page);
+  await open(page);
+  await incoming(page, { ...attrs, revision: 2, meals: [attrs.meals[1]] });
+  await expect(page.getByLabel("Time 1", { exact: true })).toHaveCount(0);
+  await expect(page.locator(".status")).toHaveText(
+    "Schedule changed. Reload to continue.",
+  );
+  expect(await calls(page)).toEqual([]);
+  await page.getByRole("button", { name: "Reload", exact: true }).click();
+  await expect(page.locator(".time")).toHaveText("19:45");
+  await open(page);
+  await page.getByRole("button", { name: "Delete meal", exact: true }).click();
+  await incoming(page, { ...attrs, revision: 3 });
   await expect(
-    page.getByRole("button", { name: "Save", exact: true }),
+    page.getByRole("button", { name: "Delete", exact: true }),
   ).toHaveCount(0);
   expect(await calls(page)).toEqual([]);
 });
-test("integration descriptive received snapshot is editable", async ({
-  page,
-}) => {
-  await setup(page, {
-    ...attrs,
-    revision: 1,
-    observation_kind:
-      "last locally reported snapshot; not an active schedule query",
-    schedule_valid: true,
-    snapshot_source: "received",
-  });
-  await open(page);
-  await expect(
-    page.getByRole("button", { name: "Increase portions 1" }),
-  ).toBeEnabled();
-  await page.getByRole("button", { name: "Increase portions 1" }).click();
-  await done(page);
-  await expect(
-    page.getByRole("button", { name: "Save", exact: true }),
-  ).toBeEnabled();
-});
-test("stale revision blocks save until explicit reload", async ({ page }) => {
-  await setup(page);
-  await open(page);
-  await page.getByRole("button", { name: "Increase portions 1" }).click();
-  await incoming(page, { ...attrs, revision: 2 });
-  await expect(page.locator(".status")).toContainText("changed while editing");
-  await expect(
-    page.getByRole("button", { name: "Save", exact: true }),
-  ).toBeDisabled();
-  expect(await calls(page)).toEqual([]);
-  await page.getByRole("button", { name: "Reload schedule" }).click();
-  await expect(page.getByLabel("Portions 1", { exact: true })).toHaveText("3");
-});
-test("add is disabled safe default; ten row and portion bounds", async ({
+
+test("add is one disabled meal with same-level Save and no automatic service", async ({
   page,
 }) => {
   await setup(page);
-  for (let i = 0; i < 8; i++)
-    await page.getByRole("button", { name: "Add disabled meal" }).click();
+  await page.getByRole("button", { name: "Add meal" }).click();
+  await expect(page.getByLabel("Time 3", { exact: true })).toHaveValue("23:59");
   await expect(
-    page.getByRole("button", { name: "Add disabled meal" }),
-  ).toBeDisabled();
-  await open(page, 10);
-  await expect(page.getByLabel("Time 10", { exact: true })).toHaveValue(
-    "23:59",
-  );
-  await expect(
-    page.getByRole("switch", { name: "Enabled 10", exact: true }),
+    page.getByRole("switch", { name: "Meal enabled", exact: true }),
   ).not.toBeChecked();
-  await expect(page.getByLabel("Portions 10", { exact: true })).toHaveText("1");
+  await expect(page.getByLabel("Portions 3", { exact: true })).toHaveText("1");
   await expect(
-    page.getByRole("button", { name: "Decrease portions 10", exact: true }),
+    page.getByRole("button", { name: "Decrease portions 3" }),
   ).toBeDisabled();
   expect(await calls(page)).toEqual([]);
-  await incoming(page, { ...attrs, revision: 2 });
-  await page.getByRole("button", { name: "Reload schedule" }).click();
+  await save(page);
+  expect(await calls(page)).toEqual([
+    [
+      "tuya_feeder",
+      "add_meal",
+      {
+        entity_id: "sensor.mock_feeder",
+        expected_revision: 1,
+        meal: {
+          days: attrs.meals[0].days,
+          time: "23:59",
+          portions: 1,
+          enabled: false,
+        },
+      },
+    ],
+  ]);
+});
+
+test("unchanged/reverted edit and invalid time disable Save, bounds clamp safely", async ({
+  page,
+}) => {
+  await setup(page);
+  await open(page);
+  await expect(
+    page.getByRole("button", { name: "Save", exact: true }),
+  ).toBeDisabled();
+  await plus(page);
+  await page.getByRole("button", { name: "Decrease portions 1" }).click();
+  await expect(
+    page.getByRole("button", { name: "Save", exact: true }),
+  ).toBeDisabled();
+  await page.getByLabel("Time 1", { exact: true }).fill("");
+  await expect(
+    page.getByRole("button", { name: "Save", exact: true }),
+  ).toBeDisabled();
+  await page.getByRole("button", { name: "Back", exact: true }).click();
   await incoming(page, {
     ...attrs,
-    revision: 3,
+    revision: 2,
     meals: [{ ...attrs.meals[0], portions: 60 }],
   });
   await open(page);
   await expect(
-    page.getByRole("button", { name: "Increase portions 1", exact: true }),
+    page.getByRole("button", { name: "Increase portions 1" }),
   ).toBeDisabled();
+  expect(await calls(page)).toEqual([]);
 });
+
+test("ten meals disable add, Escape closes edit without calls", async ({
+  page,
+}) => {
+  await setup(page, { ...attrs, meals: Array(10).fill(attrs.meals[0]) });
+  await expect(page.getByRole("button", { name: "Add meal" })).toBeDisabled();
+  await open(page);
+  await plus(page);
+  await page.keyboard.press("Escape");
+  await expect(
+    page.getByRole("button", { name: "Edit meal 1", exact: true }),
+  ).toBeFocused();
+  expect(await calls(page)).toEqual([]);
+});
+
 for (const [name, a] of Object.entries({
   unknown: {},
   legacy: {
     meals: [{ days: "Everyday", time: "12:30", portions: 1, enabled: true }],
   },
-  weekday: { ...attrs, meals: [{ ...attrs.meals[0], days: ["moon"] }] },
+  weekday: { ...attrs, meals: [{ ...attrs.meals[0], days: ["monday"] }] },
   time: { ...attrs, meals: [{ ...attrs.meals[0], time: "24:00" }] },
   boolean: { ...attrs, meals: [{ ...attrs.meals[0], enabled: "yes" }] },
   zero: { ...attrs, meals: [{ ...attrs.meals[0], portions: 0 }] },
@@ -280,125 +240,61 @@ for (const [name, a] of Object.entries({
   receipt_invalid: { ...attrs, last_received_at: "bad" },
   extra_fields: { ...attrs, meals: [{ ...attrs.meals[0], extra: true }] },
   coerced_time: { ...attrs, meals: [{ ...attrs.meals[0], time: ["08:12"] }] },
+  capability: { ...attrs, supports_schedule_write: false },
+  error: { ...attrs, error: "private technical error" },
 })) {
-  test(`fail closed ${name}`, async ({ page }) => {
+  test(`fail closed ${name} with plain unavailable and Retry`, async ({
+    page,
+  }) => {
     await setup(page, a);
+    await expect(page.locator("ha-card")).toContainText("Schedule unavailable");
+    await expect(
+      page.getByRole("button", { name: "Retry", exact: true }),
+    ).toBeVisible();
     await expect(
       page.getByRole("button", { name: "Save", exact: true }),
     ).toHaveCount(0);
-    await expect(
-      page.getByRole("button", { name: "Add disabled meal" }),
-    ).toBeDisabled();
     expect(await calls(page)).toEqual([]);
   });
 }
-test("keyboard Escape cancels and restores focus without calls", async ({
+
+test("historical acknowledgement is explicit in-card checkbox and only one logical operation", async ({
   page,
 }) => {
-  await setup(page);
-  await open(page);
-  await page.getByRole("button", { name: "Increase portions 1" }).click();
-  await done(page);
-  await page.getByRole("button", { name: "Save", exact: true }).click();
-  await expect(
-    page.getByRole("button", { name: "Cancel", exact: true }),
-  ).toBeFocused();
-  await page.keyboard.press("Escape");
-  await expect(page.getByRole("dialog")).toHaveCount(0);
-  await expect(
-    page.getByRole("button", { name: "Save", exact: true }),
-  ).toBeFocused();
-  expect(await calls(page)).toEqual([]);
-});
-test("config editor emits selected sensor, title and icon", async ({
-  page,
-}) => {
-  await setup(page);
-  const result = await page.evaluate(async () => {
-    const e: any = document.createElement("tuya-feeder-card-editor");
-    e.setConfig({ entity: "sensor.mock_feeder" });
-    document.body.append(e);
-    await e.updateComplete;
-    let result: any;
-    e.addEventListener(
-      "config-changed",
-      (ev: any) => (result = ev.detail.config),
-    );
-    e.shadowRoot.querySelector("ha-form").dispatchEvent(
-      new CustomEvent("value-changed", {
-        detail: {
-          value: {
-            entity: "sensor.mock_other",
-            title: "Example",
-            icon: "mdi:calendar",
-          },
-        },
-      }),
-    );
-    return result;
+  await setup(page, {
+    ...attrs,
+    snapshot_source: "restored",
+    supports_schedule_write: false,
+    supports_restored_schedule_write: true,
+    requires_restored_snapshot_acknowledgement: true,
   });
-  expect(result).toEqual({
-    entity: "sensor.mock_other",
-    title: "Example",
-    icon: "mdi:calendar",
-  });
-  expect(await calls(page)).toEqual([]);
-});
-test("invalid draft time blocks save and preserves other rows", async ({
-  page,
-}) => {
-  await setup(page);
   await open(page);
-  await page.getByLabel("Time 1", { exact: true }).fill("");
-  await done(page);
+  await plus(page);
   await expect(
     page.getByRole("button", { name: "Save", exact: true }),
   ).toBeDisabled();
-  await expect(page.locator(".time").nth(1)).toHaveText("19:45");
-  expect(await calls(page)).toEqual([]);
+  await page.getByRole("checkbox", { name: "Use saved plan?" }).check();
+  await save(page);
+  expect((await calls(page))[0][2].acknowledge_restored_snapshot).toBe(true);
+  await expect(page.getByRole("dialog")).toHaveCount(0);
 });
-test("service error is visible and requires reload", async ({ page }) => {
+
+test("service error preserves failed draft and only explicit retry can send again", async ({
+  page,
+}) => {
   await setup(page);
   await page.evaluate(() => {
     const c: any = document.querySelector("tuya-feeder-card");
-    c.hass.callService = async () => {
+    c.hass.callService = async (...a: any[]) => {
+      (window as any).calls.push(a);
       throw new Error("synthetic refusal");
     };
   });
   await open(page);
-  await page.getByRole("button", { name: "Increase portions 1" }).click();
-  await done(page);
-  await page.getByRole("button", { name: "Save", exact: true }).click();
-  await page.getByRole("button", { name: "Confirm Save" }).click();
-  await expect(page.locator(".status")).toContainText("synthetic refusal");
-  await expect(
-    page.getByRole("button", { name: "Save", exact: true }),
-  ).toBeDisabled();
-});
-for (const width of [640, 320])
-  test(`mock screenshot ${width}`, async ({ page }) => {
-    await page.setViewportSize({ width, height: 760 });
-    await setup(page);
-    await expect(page.locator(".time").first()).toBeVisible();
-    const overflow = await page.evaluate(
-      () => document.documentElement.scrollWidth > innerWidth,
-    );
-    expect(overflow).toBe(false);
-    await page.screenshot({
-      path: `test-results/tuya-feeder-card-mock-${width}.png`,
-      fullPage: true,
-    });
-  });
-test("draft changes and confirmation cancellation make zero calls", async ({
-  page,
-}) => {
-  await setup(page);
-  await open(page);
-  await page.getByRole("button", { name: "Increase portions 1" }).click();
-  await done(page);
-  await page.getByRole("button", { name: "Save", exact: true }).click();
-  await expect(page.getByRole("dialog")).toBeVisible();
-  await page.getByRole("button", { name: "Cancel", exact: true }).click();
-  await page.getByRole("button", { name: "Reset draft" }).click();
-  expect(await calls(page)).toEqual([]);
+  await plus(page);
+  await save(page);
+  await expect(page.locator(".status")).toHaveText("Couldn’t save. Try again.");
+  await page.getByRole("button", { name: "Try again", exact: true }).click();
+  await expect(page.getByLabel("Portions 1", { exact: true })).toHaveText("4");
+  expect((await calls(page)).length).toBe(1);
 });

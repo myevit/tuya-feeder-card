@@ -1,98 +1,141 @@
 import { test, expect } from "@playwright/test";
-test("busy container rejects pointer mutation and repeated confirmation; geometry matches", async ({
+import { attrs, setup, calls } from "./fixtures";
+
+test("busy list cannot toggle/add or repeat a confirmed Save", async ({
   page,
 }) => {
-  await page.goto("/");
-  await page.evaluate(async () => {
-    await customElements.whenDefined("tuya-feeder-card");
-    const days = [
-      "monday",
-      "tuesday",
-      "wednesday",
-      "thursday",
-      "friday",
-      "saturday",
-      "sunday",
-    ];
-    const c: any = document.createElement("tuya-feeder-card");
-    c.setConfig({ entity: "sensor.mock_feeder" });
-    (window as any).calls = [];
-    c.hass = {
-      states: {
-        "sensor.mock_feeder": {
-          state: "ready",
-          attributes: {
-            meals: [{ days, time: "12:34", portions: 1, enabled: false }],
-            revision: 1,
-            last_received_at: "2026-01-01T00:00:00Z",
-            observation_kind:
-              "last locally reported snapshot; not an active schedule query",
-            schedule_valid: true,
-            snapshot_source: "received",
-            pending: false,
-            error: null,
-            supports_schedule_write: true,
-            supported_days_mode: "every_day",
-            max_meals: 10,
-            max_portions: 60,
+  await setup(page);
+  await page.getByRole("button", { name: "Edit meal 1", exact: true }).click();
+  await page.getByRole("button", { name: "Increase portions 1" }).click();
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "Save", exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("switch", { name: "Enabled 1", exact: true }),
+  ).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Add meal" })).toBeDisabled();
+  expect((await calls(page)).length).toBe(1);
+});
+
+async function manual(page: any, helper = false) {
+  await setup(page, {
+    ...attrs,
+    supports_manual_feed: true,
+    manual_feed_pending: false,
+  });
+  await page.evaluate((helper: boolean) => {
+    const c: any = document.querySelector("tuya-feeder-card");
+    c.setConfig({
+      entity: "sensor.mock_feeder",
+      manual_feed: true,
+      ...(helper ? { portions_entity: "input_number.mock_portions" } : {}),
+    });
+    if (helper)
+      c.hass = {
+        ...c.hass,
+        states: {
+          ...c.hass.states,
+          "input_number.mock_portions": {
+            state: "4",
+            attributes: { min: 1, max: 60 },
           },
         },
-      },
-      callService: async (...args: any[]) => {
-        (window as any).calls.push(args);
-        return {};
-      },
-    };
-    document.body.append(c);
-  });
-  await page.getByRole("button", { name: "Edit meal 1", exact: true }).click();
-  const plus = page.getByRole("button", { name: "Increase portions 1" });
-  const box = (await plus.boundingBox())!;
-  expect(box.width).toBe(44);
-  expect(box.height).toBe(44);
-  await plus.click();
-  await page.getByRole("button", { name: "Done", exact: true }).click();
-  await page.getByRole("button", { name: "Save", exact: true }).click();
-  await page.getByRole("button", { name: "Confirm Save" }).click();
-  await page
-    .getByRole("switch", { name: "Enabled 1", exact: true })
-    .click({ force: true });
-  await page
-    .getByRole("button", { name: "Save", exact: true })
-    .click({ force: true });
-  await expect(page.getByLabel("Portions 1", { exact: true })).toHaveText("2");
-  expect(await page.evaluate(() => (window as any).calls.length)).toBe(1);
+      };
+  }, helper);
+}
+
+test("manual selection makes no feeding call, confirmation snapshots exact dose, cancel sends nothing", async ({
+  page,
+}) => {
+  await manual(page);
+  await page.getByRole("button", { name: "Increase feeding portions" }).click();
+  await expect(page.getByLabel("Feeding portions", { exact: true })).toHaveText(
+    "2",
+  );
+  expect(await calls(page)).toEqual([]);
+  await page.getByRole("button", { name: "Feed", exact: true }).click();
+  await expect(page.locator("ha-card")).toContainText("Feed 2 portions?");
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  expect(await calls(page)).toEqual([]);
+  await page.getByRole("button", { name: "Cancel", exact: true }).click();
+  expect(await calls(page)).toEqual([]);
+  await page.getByRole("button", { name: "Feed", exact: true }).click();
+  await page.getByRole("button", { name: "Feed", exact: true }).click();
+  expect(await calls(page)).toEqual([
+    ["tuya_feeder", "feed", { entity_id: "sensor.mock_feeder", portions: 2 }],
+  ]);
+});
+
+test("persistent helper keeps existing value and bounds; helper updates never feed; confirmation dose immutable", async ({
+  page,
+}) => {
+  await manual(page, true);
+  await expect(page.getByLabel("Feeding portions", { exact: true })).toHaveText(
+    "4",
+  );
+  await page.getByRole("button", { name: "Increase feeding portions" }).click();
+  expect(await calls(page)).toEqual([
+    ["input_number", "increment", { entity_id: "input_number.mock_portions" }],
+  ]);
+  await page.getByRole("button", { name: "Feed", exact: true }).click();
   await page.evaluate(() => {
     const c: any = document.querySelector("tuya-feeder-card");
     c.hass = {
       ...c.hass,
       states: {
-        "sensor.mock_feeder": {
-          state: "ready",
-          attributes: {
-            ...c.hass.states["sensor.mock_feeder"].attributes,
-            revision: 2,
-            last_received_at: "2026-01-01T00:01:00Z",
-            meals: [
-              {
-                enabled: false,
-                portions: 2,
-                time: "12:34",
-                days: [
-                  "sunday",
-                  "saturday",
-                  "friday",
-                  "thursday",
-                  "wednesday",
-                  "tuesday",
-                  "monday",
-                ],
-              },
-            ],
-          },
+        ...c.hass.states,
+        "input_number.mock_portions": {
+          state: "60",
+          attributes: { min: 1, max: 60 },
         },
       },
     };
   });
-  await expect(page.locator(".status")).toContainText("confirmed by incoming");
+  await expect(page.locator("h2")).toHaveText("Feed 4 portions?");
+  await page.getByRole("button", { name: "Feed", exact: true }).click();
+  expect((await calls(page))[1]).toEqual([
+    "tuya_feeder",
+    "feed",
+    { entity_id: "sensor.mock_feeder", portions: 4 },
+  ]);
+  await expect(
+    page.getByRole("button", { name: "Increase feeding portions" }),
+  ).toBeDisabled();
 });
+
+test("manual row is optional, unsupported service disables feed, no calls on container tap", async ({
+  page,
+}) => {
+  await setup(page);
+  await expect(
+    page.getByRole("button", { name: "Feed", exact: true }),
+  ).toHaveCount(0);
+  await page.evaluate(() => {
+    const c: any = document.querySelector("tuya-feeder-card");
+    c.setConfig({ entity: "sensor.mock_feeder", manual_feed: true });
+  });
+  await expect(
+    page.getByRole("button", { name: "Feed", exact: true }),
+  ).toBeDisabled();
+  await page.locator("h2").click();
+  expect(await calls(page)).toEqual([]);
+});
+
+for (const width of [640, 320])
+  test(`combined manual row does not overflow ${width}`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 760 });
+    await manual(page, true);
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth > innerWidth,
+      ),
+    ).toBe(false);
+    const b = (await page.locator(".manual").boundingBox())!;
+    expect(b.height).toBe(68);
+    await page.screenshot({
+      path: `test-results/kiosk-combined-mock-${width}.png`,
+      fullPage: true,
+    });
+    expect(await calls(page)).toEqual([]);
+  });
