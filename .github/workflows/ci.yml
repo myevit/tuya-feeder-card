@@ -16,6 +16,7 @@ jobs:
       - run: git diff --exit-code dist/tuya-feeder-card.js
       - run: npx playwright install --with-deps chromium
       - run: npm test
+      - run: python3 scripts/check_public.py
       - uses: actions/upload-artifact@v4
         if: always()
         with:

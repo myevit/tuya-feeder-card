@@ -47,6 +47,16 @@ async function setup(page: any, a: any = attrs) {
     document.body.append(c);
   }, a);
 }
+async function open(page: any, i = 1) {
+  if (!(await page.locator("dialog[data-editor]").count()))
+    await page
+      .getByRole("button", { name: `Edit meal ${i}`, exact: true })
+      .click();
+}
+async function done(page: any) {
+  if (await page.locator("dialog[data-editor]").count())
+    await page.getByRole("button", { name: "Done", exact: true }).click();
+}
 async function calls(page: any) {
   return page.evaluate(() => (window as any).calls);
 }
@@ -63,7 +73,9 @@ test("one complete payload; empty ACK stays busy; genuine report confirms", asyn
   page,
 }) => {
   await setup(page);
+  await open(page);
   await page.getByRole("button", { name: "Increase portions 1" }).click();
+  await done(page);
   await page.getByRole("button", { name: "Save", exact: true }).click();
   await page.getByRole("button", { name: "Confirm Save" }).click();
   const meals = structuredClone(attrs.meals);
@@ -99,7 +111,9 @@ test("pending transient errors and old receipts never complete Save", async ({
   page,
 }) => {
   await setup(page);
+  await open(page);
   await page.getByRole("button", { name: "Increase portions 1" }).click();
+  await done(page);
   await page.getByRole("button", { name: "Save", exact: true }).click();
   await page.getByRole("button", { name: "Confirm Save" }).click();
   const meals = structuredClone(attrs.meals);
@@ -123,7 +137,9 @@ test("missing HA updates time out without retry or discarding draft", async ({
 }) => {
   await page.clock.install();
   await setup(page);
+  await open(page);
   await page.getByRole("button", { name: "Increase portions 1" }).click();
+  await done(page);
   await page.getByRole("button", { name: "Save", exact: true }).click();
   await page.getByRole("button", { name: "Confirm Save" }).click();
   await page.clock.fastForward(21000);
@@ -145,7 +161,9 @@ test("matching report before service completion cannot hide backend rejection", 
       });
     };
   });
+  await open(page);
   await page.getByRole("button", { name: "Increase portions 1" }).click();
+  await done(page);
   await page.getByRole("button", { name: "Save", exact: true }).click();
   await page.getByRole("button", { name: "Confirm Save" }).click();
   const meals = structuredClone(attrs.meals);
@@ -168,11 +186,12 @@ test("matching report before service completion cannot hide backend rejection", 
 });
 test("reverted draft sends nothing", async ({ page }) => {
   await setup(page);
+  await open(page);
   await page.getByRole("button", { name: "Increase portions 1" }).click();
   await page.getByRole("button", { name: "Decrease portions 1" }).click();
   await expect(
     page.getByRole("button", { name: "Save", exact: true }),
-  ).toBeDisabled();
+  ).toHaveCount(0);
   expect(await calls(page)).toEqual([]);
 });
 test("integration descriptive received snapshot is editable", async ({
@@ -186,16 +205,19 @@ test("integration descriptive received snapshot is editable", async ({
     schedule_valid: true,
     snapshot_source: "received",
   });
+  await open(page);
   await expect(
     page.getByRole("button", { name: "Increase portions 1" }),
   ).toBeEnabled();
   await page.getByRole("button", { name: "Increase portions 1" }).click();
+  await done(page);
   await expect(
     page.getByRole("button", { name: "Save", exact: true }),
   ).toBeEnabled();
 });
 test("stale revision blocks save until explicit reload", async ({ page }) => {
   await setup(page);
+  await open(page);
   await page.getByRole("button", { name: "Increase portions 1" }).click();
   await incoming(page, { ...attrs, revision: 2 });
   await expect(page.locator(".status")).toContainText("changed while editing");
@@ -215,6 +237,7 @@ test("add is disabled safe default; ten row and portion bounds", async ({
   await expect(
     page.getByRole("button", { name: "Add disabled meal" }),
   ).toBeDisabled();
+  await open(page, 10);
   await expect(page.getByLabel("Time 10", { exact: true })).toHaveValue(
     "23:59",
   );
@@ -233,6 +256,7 @@ test("add is disabled safe default; ten row and portion bounds", async ({
     revision: 3,
     meals: [{ ...attrs.meals[0], portions: 60 }],
   });
+  await open(page);
   await expect(
     page.getByRole("button", { name: "Increase portions 1", exact: true }),
   ).toBeDisabled();
@@ -261,7 +285,7 @@ for (const [name, a] of Object.entries({
     await setup(page, a);
     await expect(
       page.getByRole("button", { name: "Save", exact: true }),
-    ).toBeDisabled();
+    ).toHaveCount(0);
     await expect(
       page.getByRole("button", { name: "Add disabled meal" }),
     ).toBeDisabled();
@@ -272,7 +296,9 @@ test("keyboard Escape cancels and restores focus without calls", async ({
   page,
 }) => {
   await setup(page);
+  await open(page);
   await page.getByRole("button", { name: "Increase portions 1" }).click();
+  await done(page);
   await page.getByRole("button", { name: "Save", exact: true }).click();
   await expect(
     page.getByRole("button", { name: "Cancel", exact: true }),
@@ -322,11 +348,13 @@ test("invalid draft time blocks save and preserves other rows", async ({
   page,
 }) => {
   await setup(page);
+  await open(page);
   await page.getByLabel("Time 1", { exact: true }).fill("");
+  await done(page);
   await expect(
     page.getByRole("button", { name: "Save", exact: true }),
   ).toBeDisabled();
-  await expect(page.getByLabel("Time 2", { exact: true })).toHaveValue("19:45");
+  await expect(page.locator(".time").nth(1)).toHaveText("19:45");
   expect(await calls(page)).toEqual([]);
 });
 test("service error is visible and requires reload", async ({ page }) => {
@@ -337,7 +365,9 @@ test("service error is visible and requires reload", async ({ page }) => {
       throw new Error("synthetic refusal");
     };
   });
+  await open(page);
   await page.getByRole("button", { name: "Increase portions 1" }).click();
+  await done(page);
   await page.getByRole("button", { name: "Save", exact: true }).click();
   await page.getByRole("button", { name: "Confirm Save" }).click();
   await expect(page.locator(".status")).toContainText("synthetic refusal");
@@ -349,7 +379,7 @@ for (const width of [640, 320])
   test(`mock screenshot ${width}`, async ({ page }) => {
     await page.setViewportSize({ width, height: 760 });
     await setup(page);
-    await expect(page.getByLabel("Time 1", { exact: true })).toBeVisible();
+    await expect(page.locator(".time").first()).toBeVisible();
     const overflow = await page.evaluate(
       () => document.documentElement.scrollWidth > innerWidth,
     );
@@ -363,7 +393,9 @@ test("draft changes and confirmation cancellation make zero calls", async ({
   page,
 }) => {
   await setup(page);
+  await open(page);
   await page.getByRole("button", { name: "Increase portions 1" }).click();
+  await done(page);
   await page.getByRole("button", { name: "Save", exact: true }).click();
   await expect(page.getByRole("dialog")).toBeVisible();
   await page.getByRole("button", { name: "Cancel", exact: true }).click();

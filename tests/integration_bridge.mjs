@@ -40,9 +40,37 @@ for await (const line of createInterface({ input: process.stdin })) {
         card.hass = { ...card.hass, states: { [state.entity_id]: state } };
       }, cmd.state);
     } else if (cmd.action === "save") {
+      await page
+        .getByRole("button", { name: "Edit meal 1", exact: true })
+        .click();
       await page.getByRole("button", { name: "Increase portions 1" }).click();
+      await page.getByRole("button", { name: "Done", exact: true }).click();
       await page.getByRole("button", { name: "Save", exact: true }).click();
       await page.getByRole("button", { name: "Confirm Save" }).click();
+    } else if (cmd.action === "draft_actions") {
+      await expect(page.locator(".meal")).toHaveCount(cmd.count);
+      await page
+        .getByRole("switch", { name: "Enabled 1", exact: true })
+        .click();
+      await expect(page.getByRole("dialog")).toHaveCount(0);
+      await page
+        .getByRole("button", { name: "Edit meal 1", exact: true })
+        .click();
+      await page.getByLabel("Time 1", { exact: true }).fill("09:13");
+      await page
+        .getByRole("button", { name: "Delete meal", exact: true })
+        .click();
+      await page
+        .getByRole("button", { name: "Confirm Delete", exact: true })
+        .click();
+      await page.getByRole("button", { name: "Add disabled meal" }).click();
+      await page.getByRole("button", { name: "Reset draft" }).click();
+      await expect(page.locator(".meal")).toHaveCount(cmd.count);
+      await expect(
+        page.getByRole("button", { name: "Save", exact: true }),
+      ).toHaveCount(0);
+      if (await page.evaluate(() => window.calls.length))
+        throw new Error("unexpected device call");
     } else if (cmd.action === "editable") {
       await expect(
         page.getByRole("button", { name: "Add disabled meal" }),
@@ -69,7 +97,11 @@ for await (const line of createInterface({ input: process.stdin })) {
         page.getByRole("button", { name: "Save", exact: true }),
       ).toBeDisabled();
     } else if (cmd.action === "edit") {
+      await page
+        .getByRole("button", { name: "Edit meal 1", exact: true })
+        .click();
       await page.getByRole("button", { name: "Increase portions 1" }).click();
+      await page.getByRole("button", { name: "Done", exact: true }).click();
     } else if (cmd.action === "close") {
       break;
     }

@@ -45,15 +45,18 @@ test("busy container rejects pointer mutation and repeated confirmation; geometr
     };
     document.body.append(c);
   });
+  await page.getByRole("button", { name: "Edit meal 1", exact: true }).click();
   const plus = page.getByRole("button", { name: "Increase portions 1" });
   const box = (await plus.boundingBox())!;
   expect(box.width).toBe(44);
   expect(box.height).toBe(44);
-  expect((await page.locator(".meal").boundingBox())!.height).toBe(68);
   await plus.click();
+  await page.getByRole("button", { name: "Done", exact: true }).click();
   await page.getByRole("button", { name: "Save", exact: true }).click();
   await page.getByRole("button", { name: "Confirm Save" }).click();
-  await plus.click({ force: true });
+  await page
+    .getByRole("switch", { name: "Enabled 1", exact: true })
+    .click({ force: true });
   await page
     .getByRole("button", { name: "Save", exact: true })
     .click({ force: true });
