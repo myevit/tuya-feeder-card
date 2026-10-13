@@ -1,0 +1,19 @@
+{
+  "name": "tuya-feeder-card",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc --noEmit && esbuild src/card.ts --bundle --format=esm --target=es2022 --minify --outfile=dist/tuya-feeder-card.js",
+    "test": "playwright test"
+  },
+  "dependencies": {
+    "lit": "^3.3.1"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.56.0",
+    "esbuild": "^0.25.0",
+    "prettier": "^3.9.10",
+    "typescript": "^5.9.0"
+  }
+}
