@@ -70,6 +70,7 @@ export class TuyaFeederCard extends LitElement {
   private base: unknown;
   private sent?: Meal[];
   private sentAt?: string;
+  private serviceCompleted = false;
   private confirmationTimer?: ReturnType<typeof setTimeout>;
   private clearConfirmationTimer() {
     if (this.confirmationTimer) clearTimeout(this.confirmationTimer);
@@ -96,6 +97,7 @@ export class TuyaFeederCard extends LitElement {
         this.conflict = true;
       } else if (
         this.writable &&
+        this.serviceCompleted &&
         !a.pending &&
         a.revision > (this.base as number) &&
         a.last_received_at !== this.sentAt &&
@@ -221,6 +223,7 @@ export class TuyaFeederCard extends LitElement {
     if (!this.saveable) return;
     this.sent = clone(this.draft);
     this.sentAt = this.attrs.last_received_at;
+    this.serviceCompleted = false;
     this.busy = true;
     this.clearConfirmationTimer();
     this.confirmationTimer = setTimeout(() => {
@@ -245,6 +248,11 @@ export class TuyaFeederCard extends LitElement {
         this.busy = false;
         this.conflict = true;
         this.message = String(r.error);
+      } else if (this.busy) {
+        // A report can arrive before the handler rejects a stale revision.
+        // Wait for handler completion as well as an independently matching receipt.
+        this.serviceCompleted = true;
+        this.hass = this.hass;
       }
     } catch (e) {
       if (!this.busy) return;

@@ -132,6 +132,40 @@ test("missing HA updates time out without retry or discarding draft", async ({
   await expect(page.getByLabel("Portions 1", { exact: true })).toHaveText("4");
   expect((await calls(page)).length).toBe(1);
 });
+test("matching report before service completion cannot hide backend rejection", async ({
+  page,
+}) => {
+  await setup(page);
+  await page.evaluate(() => {
+    const card: any = document.querySelector("tuya-feeder-card");
+    card.hass.callService = (...args: any[]) => {
+      (window as any).calls.push(args);
+      return new Promise((_resolve, reject) => {
+        (window as any).rejectSave = reject;
+      });
+    };
+  });
+  await page.getByRole("button", { name: "Increase portions 1" }).click();
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await page.getByRole("button", { name: "Confirm Save" }).click();
+  const meals = structuredClone(attrs.meals);
+  meals[0].portions = 4;
+  await incoming(page, {
+    ...attrs,
+    meals,
+    revision: 2,
+    last_received_at: "2026-01-01T00:01:00Z",
+  });
+  await expect(page.locator("section")).toHaveAttribute("inert", "");
+  await page.evaluate(() =>
+    (window as any).rejectSave(new Error("Stale revision")),
+  );
+  await expect(page.locator(".status")).toContainText("Stale revision");
+  await expect(page.locator(".status")).not.toContainText(
+    "confirmed by incoming",
+  );
+  expect((await calls(page)).length).toBe(1);
+});
 test("reverted draft sends nothing", async ({ page }) => {
   await setup(page);
   await page.getByRole("button", { name: "Increase portions 1" }).click();
