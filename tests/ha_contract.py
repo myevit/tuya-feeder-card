@@ -152,3 +152,75 @@ async def test_manual_actual_card_payload_only_one_dp3_no_dp1_or_dp2(hass,feeder
     assert result['reported'] is True
     await bridge('state',state=state(hass,sensor));await bridge('service_result',result=result)
     transport.assert_not_called();wire.exchange_quick.assert_awaited_once()
+
+@pytest.mark.parametrize('source', ['received', 'restored'])
+@pytest.mark.parametrize('order', ['report_first', 'handler_first'])
+async def test_direct_toggle_actual_atomic_merge_and_completion(hass, feeder, bridge, source, order):
+    sensor, entry, transport, _ = feeder
+    sensor.confirm_timeout = 10
+    if source == 'restored':
+        from test_snapshot_import import import_saved
+        await import_saved(hass, sensor, entry)
+    else:
+        await report(hass, [*BASE, {**BASE[0], 'time': '22:48', 'enabled': False}])
+    initial = state(hass, sensor)
+    baseline = initial['attributes']['meals']
+    await bridge('init', state=initial)
+    calls = await bridge('toggle')
+    expected = {'entity_id': sensor.entity_id, 'expected_revision': sensor.revision,
+                'meal_index': 0, 'meal': {**baseline[0], 'enabled': not baseline[0]['enabled']}}
+    if source == 'restored':
+        expected['acknowledge_restored_snapshot'] = True
+    assert calls == [['tuya_feeder', 'update_meal', expected]]
+    merged = [expected['meal'], *baseline[1:]]
+    async def receive(call):
+        assert call.data == {'device_id': DEVICE, 'dp': 1, 'value': encode(merged)}
+        await bridge('state', state=state(hass, sensor))
+        await bridge('busy')
+        await report(hass, merged)
+        if order == 'report_first':
+            await bridge('state', state=state(hass, sensor))
+            await bridge('busy')
+    transport.side_effect = receive
+    result = await hass.services.async_call(*calls[0][:2], calls[0][2], blocking=True, return_response=True)
+    assert result['confirmed'] is True
+    if order == 'handler_first':
+        await bridge('service_result', result=result)
+        await bridge('busy')
+        await bridge('state', state=state(hass, sensor))
+    else:
+        await bridge('state', state=state(hass, sensor))
+        await bridge('busy')
+        await bridge('service_result', result=result)
+    await bridge('confirmed')
+    assert sensor.meals[1:] == baseline[1:]
+    transport.assert_called_once()
+
+@pytest.mark.parametrize('outcome', ['stale', 'busy', 'timeout'])
+async def test_direct_toggle_actual_denial_never_retries(hass, feeder, bridge, outcome):
+    from homeassistant.exceptions import ServiceValidationError
+    sensor, _, transport, _ = feeder
+    await report(hass)
+    await bridge('init', state=state(hass, sensor))
+    calls = await bridge('toggle')
+    if outcome == 'stale':
+        await report(hass, [{**BASE[0], 'portions': 4}])
+    if outcome == 'busy':
+        await sensor._action_lock.acquire()
+    try:
+        if outcome == 'timeout':
+            result = await hass.services.async_call(*calls[0][:2], calls[0][2], blocking=True, return_response=True)
+            assert result['error'] == 'unconfirmed_timeout'
+            await bridge('state', state=state(hass, sensor))
+            await bridge('service_result', result=result)
+            transport.assert_called_once()
+        else:
+            with pytest.raises(ServiceValidationError):
+                await hass.services.async_call(*calls[0][:2], calls[0][2], blocking=True, return_response=True)
+            await bridge('service_result', error=outcome)
+            transport.assert_not_called()
+        await bridge('toggle_error')
+        assert len(await bridge('readonly' if outcome == 'timeout' else 'editable')) == 1
+    finally:
+        if outcome == 'busy':
+            sensor._action_lock.release()

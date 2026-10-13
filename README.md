@@ -25,12 +25,12 @@ The integration owns discovery, schedule decoding, transport and confirmation. T
 ## Editing meals
 
 - Tap a meal for time, portions, enabled status and read-only **Every day**. Other weekday combinations are not advertised as supported.
-- The list switch opens the same editor with the changed switch value. Nothing is sent until **Save**.
+- The list switch immediately sends one `update_meal` operation for that meal at the current reported revision. It does not open an editor, confirmation, or global Save. The pending switch is busy and conflicting actions are disabled until handler completion plus a genuine matching incoming report.
 - **+** opens a new, disabled meal at **23:59**, with **one portion**. Cancel sends nothing. At the device's meal limit (at most ten), adding is disabled.
 - **Delete meal** replaces the editor with an in-card Cancel/Delete confirmation. Confirmed Delete sends one logical deletion.
-- When using a restored plan, explicitly check **Use saved plan?** before Save/Delete. The backend acknowledgement gate remains in force.
+- When using a restored plan, explicitly check **Use saved plan?** before editor Save/Delete. A direct list-switch tap is itself explicit intent and supplies the strict boolean acknowledgement only when the validated restored-snapshot capability permits it. Invalid, uncertain, unsupported, and stale plans remain blocked by the backend.
 - During confirmation the list shows **Saving…** and conflicting actions are disabled. A service ACK alone is not success. **Saved** requires handler completion and a newer, genuine received matching plan.
-- Failure retains the edited meal. **Try again** reopens that edit; only another explicit Save can resend. Nothing automatically retries. A revision change while editing requires Reload and blocks stale indices.
+- Editor failure retains the edited meal. **Try again** reopens that edit; only another explicit Save can resend. Switch failure/unknown outcome returns to the actual reported setting with a plain error, not an editor or retry flow. Nothing automatically retries. A revision change while editing requires Reload and blocks stale indices; a conflicting incoming plan during a switch operation cannot overwrite another meal or falsely show success.
 - Unknown, malformed, unsupported or unavailable schedules show **Schedule unavailable** with Retry; they never appear successfully loaded.
 
 The front of the card deliberately omits revision numbers, provenance and technical warnings. Debug failures are logged to the browser console. A locally received schedule is not an active cloud query or proof that food physically dispensed. The integration remains the safety authority, including restored-plan acknowledgement and uncertain transport handling.
@@ -111,7 +111,7 @@ Appearance options and HA themes are the simplest route and work without card-mo
 - `delete_meal`: `{entity_id, expected_revision, meal_index}`
 - `feed`: `{entity_id, portions}`
 
-Meal: `{days: [all seven lowercase weekday names], time: "HH:MM", portions: integer, enabled: boolean}`. Indices are zero-based. Restored schedule operations include `acknowledge_restored_snapshot: true` only after the explicit checkbox. The backend merges the logical meal operation into its current full plan, preserves other rows and performs the full-DP encoding. The legacy integration `set_schedule` service remains compatible but the v0.2 card does not use it.
+Meal: `{days: [all seven lowercase weekday names], time: "HH:MM", portions: integer, enabled: boolean}`. Indices are zero-based. Restored schedule operations include `acknowledge_restored_snapshot: true` after the explicit editor checkbox or direct list-switch intent, only with validated restored-write capability. The backend merges the logical meal operation into its current full plan, preserves other rows and performs the full-DP encoding. The legacy integration `set_schedule` service remains compatible but the v0.2 card does not use it.
 
 ## Development and verification
 

@@ -59,7 +59,9 @@ test("draft enable does not change active card until matching confirmed attribut
   });
   await page.getByRole("switch", { name: "Enabled 1", exact: true }).click();
   await expect(page.locator("ha-card")).toHaveAttribute("data-active", "false");
-  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "Save", exact: true }),
+  ).toHaveCount(0);
   await expect(page.locator("ha-card")).toHaveAttribute("data-active", "false");
   await page.evaluate((a) => {
     const c: any = document.querySelector("tuya-feeder-card");

@@ -1,4 +1,5 @@
 import { LitElement, html, css, nothing } from "lit";
+import { live } from "lit/directives/live.js";
 const DAYS = [
   "monday",
   "tuesday",
@@ -141,7 +142,9 @@ export class TuyaFeederCard extends LitElement {
   private sent?: Meal[];
   private sentAt?: string;
   private serviceCompleted = false;
+  private attempt = 0;
   private failed = false;
+  private toggling: number | null = null;
   private operation: "update_meal" | "add_meal" | "delete_meal" = "update_meal";
   private feedDose?: number;
   private timer?: ReturnType<typeof setTimeout>;
@@ -166,6 +169,14 @@ export class TuyaFeederCard extends LitElement {
     if (this.busy) {
       if (a.error && !a.pending) this.failure(a.error);
       else if (
+        this.toggling !== null &&
+        a.revision > this.base &&
+        this.sent &&
+        valid(a.meals, a.max_meals, a.max_portions) &&
+        !samePlan(this.sent, a.meals)
+      )
+        this.failure("Schedule changed during update");
+      else if (
         this.serviceCompleted &&
         this.writable &&
         a.snapshot_source === "received" &&
@@ -178,6 +189,7 @@ export class TuyaFeederCard extends LitElement {
         this.busy = false;
         this.failed = false;
         this.sent = undefined;
+        this.toggling = null;
         this.editing = null;
         this.load();
         this.message = "Saved";
@@ -245,7 +257,13 @@ export class TuyaFeederCard extends LitElement {
     );
   }
   private get locked() {
-    return !this.writable || this.conflict || this.busy || this.feedBusy;
+    return (
+      !this.writable ||
+      this.conflict ||
+      this.busy ||
+      this.feedBusy ||
+      this.attrs.feeding_pending === true
+    );
   }
   private load() {
     this.base = this.attrs.revision;
@@ -264,6 +282,7 @@ export class TuyaFeederCard extends LitElement {
     this.view = "list";
     this.conflict = false;
     this.failed = false;
+    this.toggling = null;
     this.message = "";
     this.acknowledged = false;
     this.load();
@@ -279,6 +298,24 @@ export class TuyaFeederCard extends LitElement {
     if (enabled !== undefined) this.edit("enabled", enabled);
     await this.updateComplete;
     this.renderRoot.querySelector<HTMLButtonElement>("[data-back]")?.focus();
+  }
+  private async toggle(i: number, event: Event) {
+    const input = event.target as HTMLInputElement;
+    const enabled = input.checked;
+    input.checked =
+      this.busy && this.toggling === i
+        ? (this.sent?.[i].enabled ?? false)
+        : (this.baseline[i]?.enabled ?? false);
+    if (this.locked || this.failed || this.view !== "list") return;
+    // Refresh the baseline synchronously; backend merges at this exact revision.
+    this.load();
+    if (!this.baseline[i] || this.baseline[i].enabled === enabled) return;
+    this.operation = "update_meal";
+    this.editing = i;
+    this.toggling = i;
+    this.acknowledged = this.attrs.snapshot_source === "restored";
+    this.edit("enabled", enabled);
+    await this.save();
   }
   private add() {
     if (
@@ -331,9 +368,21 @@ export class TuyaFeederCard extends LitElement {
   }
   private failure(e: unknown) {
     console.error("Tuya feeder operation failed", e);
+    this.attempt++;
     this.clearTimer();
     this.busy = false;
     this.failed = true;
+    if (this.toggling !== null) {
+      this.toggling = null;
+      this.sent = undefined;
+      this.editing = null;
+      this.failed = false;
+      this.load();
+      this.message =
+        "Couldn’t change meal. Check the schedule before trying again.";
+      this.requestUpdate();
+      return;
+    }
     this.message = "Couldn’t save. Try again.";
     this.requestUpdate();
   }
@@ -381,6 +430,7 @@ export class TuyaFeederCard extends LitElement {
         : {}),
     };
     this.sentAt = this.attrs.last_received_at;
+    const attempt = ++this.attempt;
     this.serviceCompleted = false;
     this.busy = true;
     this.failed = false;
@@ -388,7 +438,7 @@ export class TuyaFeederCard extends LitElement {
     this.message = "Saving…";
     this.clearTimer();
     this.timer = setTimeout(() => {
-      if (this.busy)
+      if (this.busy && this.attempt === attempt)
         this.failure(
           new Error("Schedule confirmation timed out; no retry sent"),
         );
@@ -399,14 +449,20 @@ export class TuyaFeederCard extends LitElement {
         this.operation,
         data,
       );
-      if (!this.busy) return;
-      if (r?.error) this.failure(r.error);
+      if (!this.busy || this.attempt !== attempt) return;
+      if (
+        r?.error ||
+        r?.response?.error ||
+        r?.confirmed === false ||
+        r?.response?.confirmed === false
+      )
+        this.failure(r?.error ?? r?.response?.error ?? "unconfirmed");
       else {
         this.serviceCompleted = true;
         this.hass = this.hass;
       }
     } catch (e) {
-      if (this.busy) this.failure(e);
+      if (this.busy && this.attempt === attempt) this.failure(e);
     }
   }
   private get helper() {
@@ -439,7 +495,8 @@ export class TuyaFeederCard extends LitElement {
       b = this.feedBounds;
     return (
       this.attrs.supports_manual_feed === true &&
-      !this.attrs.manual_feed_pending &&
+      !this.attrs.feeding_pending &&
+      !this.attrs.pending &&
       (!this.hass.services || !!this.hass.services.tuya_feeder?.feed) &&
       !!b &&
       Number.isInteger(n) &&
@@ -603,9 +660,10 @@ export class TuyaFeederCard extends LitElement {
                               type="checkbox"
                               role="switch"
                               aria-label=${`Enabled ${n + 1}`}
-                              .checked=${meal.enabled}
+                              .checked=${live(this.busy && this.toggling === n ? (this.sent?.[n].enabled ?? meal.enabled) : meal.enabled)}
+                              aria-busy=${String(this.busy && this.toggling === n)}
                               ?disabled=${this.locked || this.failed}
-                              @change=${(e: Event) => this.openEditor(n, (e.target as HTMLInputElement).checked)}
+                              @change=${(e: Event) => this.toggle(n, e)}
                             />
                           </div>`,
                       )
@@ -727,6 +785,7 @@ export class TuyaFeederCard extends LitElement {
   static styles = css`
     :host {
       display: block;
+      container-type: inline-size;
       color: var(--primary-text-color, #222);
       font-family: var(
         --feeder-font-family,
@@ -799,6 +858,16 @@ export class TuyaFeederCard extends LitElement {
       background: var(--feeder-header-icon-background, transparent);
       color: var(--feeder-header-icon-color, #9da0a2);
     }
+    header:not(.edit-header):has(> ha-icon) {
+      display: grid;
+      grid-template-columns: 64px minmax(0, 1fr);
+      gap: 0;
+      margin-left: -10px;
+      margin-right: -10px;
+    }
+    header > ha-icon {
+      margin-left: 11.5px;
+    }
     .meal {
       display: flex;
       align-items: center;
@@ -815,14 +884,18 @@ export class TuyaFeederCard extends LitElement {
       overflow: hidden;
     }
     .open {
+      display: flex;
+      align-items: center;
+      gap: 12px;
       flex: 1;
       min-width: 0;
       text-align: left;
-      padding: 16px;
+      padding: 16px 12px;
       border-radius: 0;
     }
     .time {
       display: block;
+      flex-shrink: 0;
       font-size: var(--feeder-meal-time-font-size, 32px);
       font-weight: 500;
       letter-spacing: -1.5px;
@@ -839,7 +912,9 @@ export class TuyaFeederCard extends LitElement {
     }
     .open .detail {
       display: block;
-      margin-top: 6px;
+      margin: 0;
+      line-height: 1.3;
+      text-wrap: pretty;
     }
     button {
       min-height: var(--control);
@@ -997,16 +1072,16 @@ export class TuyaFeederCard extends LitElement {
     .edit-header [data-back] ha-icon {
       color: inherit;
     }
-    .manual {
+    header.manual:not(.edit-header):has(> ha-icon) {
       display: grid;
       grid-template-columns:
-        45px minmax(33px, 1fr) var(--control) 32px var(--control)
+        64px minmax(33px, 1fr) var(--control) 32px var(--control)
         minmax(64px, 1fr);
-      column-gap: 2px;
+      column-gap: 0;
       align-items: center;
       min-height: 68px;
-      margin: 0 -4px 12px;
-      padding: 10px 0;
+      margin: 0 -10px 12px;
+      padding: 0 6px 0 0;
     }
     .manual h2 {
       overflow: hidden;
@@ -1023,6 +1098,24 @@ export class TuyaFeederCard extends LitElement {
     }
     .unavailable {
       padding: 16px 0;
+    }
+    @container (max-width: 360px) {
+      .meal {
+        gap: 4px;
+      }
+      .open {
+        gap: 8px;
+        padding: 16px 8px;
+      }
+      .open .time {
+        font-size: var(--feeder-meal-time-font-size, 26px);
+      }
+      .open .detail {
+        font-size: 12px;
+      }
+      .meal .switch {
+        margin-right: 8px;
+      }
     }
     [inert] {
       pointer-events: none;

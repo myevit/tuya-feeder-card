@@ -56,6 +56,22 @@ for await (const line of createInterface({ input: process.stdin })) {
         if (error) window.rejectService(new Error(error));
         else window.resolveService(result ?? {});
       }, cmd);
+    } else if (cmd.action === "toggle") {
+      await page
+        .getByRole("switch", { name: `Enabled ${cmd.index ?? 1}`, exact: true })
+        .click();
+      await expect(button("Save")).toHaveCount(0);
+      await expect(button("Back")).toHaveCount(0);
+      await expect(page.getByRole("dialog")).toHaveCount(0);
+      await expect(
+        page.getByRole("checkbox", { name: "Use saved plan?" }),
+      ).toHaveCount(0);
+      await expect(page.locator(".status")).toHaveText("Saving…");
+    } else if (cmd.action === "toggle_error") {
+      await expect(page.locator(".status")).toContainText(
+        "Couldn’t change meal",
+      );
+      await expect(button("Try again")).toHaveCount(0);
     } else if (cmd.action === "save") {
       if (!(await page.getByLabel("Time 1", { exact: true }).count())) {
         await button("Edit meal 1").click();
@@ -66,8 +82,9 @@ for await (const line of createInterface({ input: process.stdin })) {
       await button("Save").click();
     } else if (cmd.action === "draft_actions") {
       await expect(page.locator(".meal")).toHaveCount(cmd.count);
+      await button("Edit meal 1").click();
       await page
-        .getByRole("switch", { name: "Enabled 1", exact: true })
+        .getByRole("switch", { name: "Meal enabled", exact: true })
         .click();
       await expect(page.getByRole("dialog")).toHaveCount(0);
       await page.getByLabel("Time 1", { exact: true }).fill("09:13");

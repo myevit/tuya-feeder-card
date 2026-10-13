@@ -28,11 +28,12 @@ test("editor replaces list in card and Save sends exactly one meal", async ({
   await expect(page.locator(".status")).toHaveText("Saving…");
 });
 
-test("Cancel discards only this edit and list toggle opens approval in card", async ({
+test("Cancel discards only this editor edit without sending anything", async ({
   page,
 }) => {
   await setup(page);
-  await page.getByRole("switch", { name: "Enabled 1", exact: true }).click();
+  await page.getByRole("button", { name: "Edit meal 1", exact: true }).click();
+  await page.getByRole("switch", { name: "Meal enabled", exact: true }).click();
   await expect(
     page.getByRole("switch", { name: "Meal enabled", exact: true }),
   ).not.toBeChecked();

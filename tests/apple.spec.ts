@@ -15,7 +15,11 @@ for (const width of [640, 320])
         weight: getComputedStyle(el).fontWeight,
         title: getComputedStyle(el.getRootNode().querySelector("h2")).fontSize,
       }));
-    expect(geometry).toEqual({ font: "32px", weight: "500", title: "18px" });
+    expect(geometry).toEqual({
+      font: width === 320 ? "26px" : "32px",
+      weight: "500",
+      title: "18px",
+    });
     await expect(page.locator("ha-card")).not.toContainText(
       /revision|snapshot|Device-owned|technical|locally|report/i,
     );
