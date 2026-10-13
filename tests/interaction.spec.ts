@@ -6,7 +6,7 @@ test("busy list cannot toggle/add or repeat a confirmed Save", async ({
 }) => {
   await setup(page);
   await page.getByRole("button", { name: "Edit meal 1", exact: true }).click();
-  await page.getByRole("button", { name: "Increase portions 1" }).click();
+  await page.getByLabel("Portions", { exact: true }).fill("4");
   await page.getByRole("button", { name: "Save", exact: true }).click();
   await expect(
     page.getByRole("button", { name: "Save", exact: true }),
@@ -55,13 +55,16 @@ test("manual selection makes no feeding call, confirmation snapshots exact dose,
   );
   expect(await calls(page)).toEqual([]);
   await page.getByRole("button", { name: "Feed", exact: true }).click();
-  await expect(page.locator("ha-card")).toContainText("Feed 2 portions?");
+  await expect(page.locator("ha-dialog")).toHaveAttribute(
+    "header-title",
+    "Feed 2 portions?",
+  );
   await expect(page.getByRole("dialog")).toHaveCount(0);
   expect(await calls(page)).toEqual([]);
   await page.getByRole("button", { name: "Cancel", exact: true }).click();
   expect(await calls(page)).toEqual([]);
   await page.getByRole("button", { name: "Feed", exact: true }).click();
-  await page.getByRole("button", { name: "Feed", exact: true }).click();
+  await page.getByRole("button", { name: "Feed now", exact: true }).click();
   expect(await calls(page)).toEqual([
     ["tuya_feeder", "feed", { entity_id: "sensor.mock_feeder", portions: 2 }],
   ]);
@@ -92,8 +95,11 @@ test("persistent helper keeps existing value and bounds; helper updates never fe
       },
     };
   });
-  await expect(page.locator("h2")).toHaveText("Feed 4 portions?");
-  await page.getByRole("button", { name: "Feed", exact: true }).click();
+  await expect(page.locator("ha-dialog")).toHaveAttribute(
+    "header-title",
+    "Feed 4 portions?",
+  );
+  await page.getByRole("button", { name: "Feed now", exact: true }).click();
   expect((await calls(page))[1]).toEqual([
     "tuya_feeder",
     "feed",
@@ -137,7 +143,7 @@ for (const width of [640, 320])
       ),
     ).toBe(false);
     const b = (await page.locator(".manual").boundingBox())!;
-    expect(b.height).toBe(68);
+    expect(b.height).toBeGreaterThanOrEqual(68);
     await page.screenshot({
       path: `test-results/kiosk-combined-mock-${width}.png`,
       fullPage: true,

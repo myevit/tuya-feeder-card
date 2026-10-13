@@ -82,79 +82,42 @@ test("draft enable does not change active card until matching confirmed attribut
   await expect(page.locator("ha-card")).toHaveAttribute("data-active", "true");
 });
 
-test("computed defaults match generic standard action/entity reference, not an accent inactive icon", async ({
+test("independent standard surfaces use saved meal activity and transparent wrapper", async ({
   page,
 }) => {
-  await setup(page, { ...attrs, meals: [] });
-  await page.addStyleTag({
-    content: `body { --primary-color: #ff9f09; --accent-color: #ff9f09; --state-icon-color: white; --primary-text-color: white; --ha-card-background: rgba(10,10,10,.4); } .reference { color:white; background:var(--ha-card-background); } .reference .icon {color:#9da0a2;background:transparent;} .reference.active {color:black;background:white;} .reference.active .icon {color:white;background:var(--accent-color);}`,
-  });
-  await page.evaluate(() => {
-    const e = document.createElement("div");
-    e.className = "reference";
-    e.innerHTML = '<span class="icon"></span>';
-    document.body.append(e);
-  });
-  for (const active of [false, true]) {
-    await page.evaluate(
-      ({ active, a }) => {
-        document
-          .querySelector(".reference")!
-          .classList.toggle("active", active);
-        const c: any = document.querySelector("tuya-feeder-card");
-        c.hass = {
-          ...c.hass,
-          states: {
-            "sensor.mock_feeder": {
-              state: "ready",
-              attributes: { ...a, meals: active ? a.meals : [] },
-            },
-          },
-        };
-      },
-      { active, a: attrs },
-    );
-    const ref = await page.locator(".reference").evaluate((e) => ({
-      background: getComputedStyle(e).backgroundColor,
-      text: getComputedStyle(e).color,
-      icon: getComputedStyle(e.querySelector(".icon")!).color,
-      iconBackground: getComputedStyle(e.querySelector(".icon")!)
-        .backgroundColor,
-    }));
-    const card = await page.locator("ha-card").evaluate((e) => ({
-      background: getComputedStyle(e).backgroundColor,
-      text: getComputedStyle(e).color,
-      icon: getComputedStyle(e.querySelector("header > ha-icon")!).color,
-      iconBackground: getComputedStyle(e.querySelector("header > ha-icon")!)
-        .backgroundColor,
-    }));
-    expect(card).toEqual(ref);
-    expect(
-      await page.locator("h2").evaluate((e) => getComputedStyle(e).color),
-    ).toBe(ref.text);
-    if (active)
-      expect(
-        await page
-          .locator(".detail")
-          .first()
-          .evaluate((e) => getComputedStyle(e).color),
-      ).toBe("rgb(128, 128, 128)");
-  }
+  await setup(page);
   await page.addStyleTag({
     content:
-      "tuya-feeder-card { --feeder-active-card-background: rgb(20,30,40); --feeder-active-text-color: rgb(200,210,220); --feeder-active-icon-background: rgb(50,60,70); --feeder-active-icon-color: rgb(230,240,250); }",
+      "tuya-feeder-card {--accent-color:orange;--primary-text-color:white;--secondary-text-color:gray;}",
   });
-  expect(
-    await page
-      .locator("ha-card")
-      .evaluate((e) => getComputedStyle(e).backgroundColor),
-  ).toBe("rgb(20, 30, 40)");
-  expect(
-    await page
-      .locator("header > ha-icon")
-      .evaluate((e) => getComputedStyle(e).color),
-  ).toBe("rgb(230, 240, 250)");
-  expect(await calls(page)).toEqual([]);
+  const actual = await page.evaluate(() => {
+    const c: any = document.querySelector("tuya-feeder-card"),
+      r = c.shadowRoot;
+    const styles = (el: any) => ({
+      bg: getComputedStyle(el).backgroundColor,
+      color: getComputedStyle(el).color,
+    });
+    return {
+      outer: styles(r.querySelector("ha-card")),
+      header: styles(r.querySelector("header")),
+      rows: [...r.querySelectorAll(".meal")].map((el: any) => ({
+        surface: styles(el),
+        title: styles(el.querySelector(".time")),
+        detail: styles(el.querySelector(".detail")),
+        icon: styles(el.querySelector("ha-icon")),
+      })),
+    };
+  });
+  expect(actual.outer.bg).toBe("rgba(0, 0, 0, 0)");
+  expect(actual.header.bg).toBe("rgb(255, 255, 255)");
+  expect(actual.rows[0].surface.bg).toBe("rgb(255, 255, 255)");
+  expect(actual.rows[0].title.color).toBe("rgb(0, 0, 0)");
+  expect(actual.rows[0].detail.color).toBe("rgba(0, 0, 0, 0.5)");
+  expect(actual.rows[0].icon.bg).toBe("rgb(255, 165, 0)");
+  expect(actual.rows[1].surface.bg).toBe("rgba(0, 0, 0, 0.3)");
+  expect(actual.rows[1].title.color).toBe("rgb(255, 255, 255)");
+  expect(actual.rows[1].detail.color).toBe("rgba(255, 255, 255, 0.5)");
+  expect(actual.rows[1].icon.bg).toBe("rgba(0, 0, 0, 0.2)");
 });
 
 test("single identity header merges manual controls and preserves legacy fallback", async ({

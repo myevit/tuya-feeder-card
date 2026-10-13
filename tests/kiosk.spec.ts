@@ -1,17 +1,17 @@
 import { test, expect } from "@playwright/test";
 import { attrs, setup, calls } from "./fixtures";
 
-test("editor replaces list in card and Save sends exactly one meal", async ({
+test("native editor keeps the list beneath its dialog and Save sends exactly one meal", async ({
   page,
 }) => {
   await setup(page);
   await page.getByRole("button", { name: "Edit meal 1", exact: true }).click();
   await expect(page.getByRole("dialog")).toHaveCount(0);
-  await expect(page.locator(".meal")).toHaveCount(0);
+  await expect(page.locator(".meal")).toHaveCount(2);
   await expect(
-    page.getByRole("button", { name: "Back", exact: true }),
+    page.getByRole("button", { name: "Cancel", exact: true }),
   ).toBeVisible();
-  await page.getByRole("button", { name: "Increase portions 1" }).click();
+  await page.getByLabel("Portions", { exact: true }).fill("4");
   await page.getByRole("button", { name: "Save", exact: true }).click();
   expect(await calls(page)).toEqual([
     [
@@ -33,28 +33,26 @@ test("Cancel discards only this editor edit without sending anything", async ({
 }) => {
   await setup(page);
   await page.getByRole("button", { name: "Edit meal 1", exact: true }).click();
-  await page.getByRole("switch", { name: "Meal enabled", exact: true }).click();
+  await page.getByRole("switch", { name: "Enabled", exact: true }).click();
   await expect(
-    page.getByRole("switch", { name: "Meal enabled", exact: true }),
+    page.getByRole("switch", { name: "Enabled", exact: true }),
   ).not.toBeChecked();
-  await page.getByRole("button", { name: "Back", exact: true }).click();
+  await page.getByRole("button", { name: "Cancel", exact: true }).click();
   await expect(
     page.getByRole("switch", { name: "Enabled 1", exact: true }),
   ).toBeChecked();
   expect(await calls(page)).toEqual([]);
 });
 
-test("delete confirmation replaces edit view and never opens popup", async ({
-  page,
-}) => {
+test("delete confirmation stays in the native dialog", async ({ page }) => {
   await setup(page);
   await page.getByRole("button", { name: "Edit meal 2", exact: true }).click();
-  await page.getByRole("button", { name: "Delete meal", exact: true }).click();
-  await expect(page.getByLabel("Time 2", { exact: true })).toHaveCount(0);
+  await page.getByRole("button", { name: "Delete", exact: true }).click();
+  await expect(page.getByLabel("Time", { exact: true })).toHaveCount(0);
   await expect(page.getByRole("dialog")).toHaveCount(0);
   await page.getByRole("button", { name: "Cancel", exact: true }).click();
-  await expect(page.getByLabel("Time 2", { exact: true })).toBeVisible();
-  await page.getByRole("button", { name: "Delete meal", exact: true }).click();
+  await expect(page.getByLabel("Time", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Delete", exact: true }).click();
   await page.getByRole("button", { name: "Delete", exact: true }).click();
   expect(await calls(page)).toEqual([
     [
@@ -75,9 +73,9 @@ test("compact header Add icon is a distinct accessible 44px target; cancel sends
   expect(b.width).toBeGreaterThanOrEqual(44);
   expect(b.height).toBeGreaterThanOrEqual(44);
   await add.click();
-  await expect(page.getByLabel("Time 3", { exact: true })).toBeVisible();
+  await expect(page.getByLabel("Time", { exact: true })).toBeVisible();
   expect(await calls(page)).toEqual([]);
-  await page.getByRole("button", { name: "Back", exact: true }).click();
+  await page.getByRole("button", { name: "Cancel", exact: true }).click();
   await expect(page.locator(".meal")).toHaveCount(2);
   expect(await calls(page)).toEqual([]);
 });

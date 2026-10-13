@@ -1,4 +1,5 @@
 import { Page } from "@playwright/test";
+import { setupNativeDoubles } from "./native-doubles.mjs";
 export const days = [
   "monday",
   "tuesday",
@@ -26,6 +27,7 @@ export const attrs = {
 };
 export async function setup(page: Page, a: any = attrs) {
   await page.goto("/");
+  await setupNativeDoubles(page);
   await page.evaluate(async (a) => {
     await customElements.whenDefined("tuya-feeder-card");
     const c: any = document.createElement("tuya-feeder-card");

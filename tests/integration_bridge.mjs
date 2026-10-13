@@ -2,6 +2,7 @@
 import { chromium, expect } from "@playwright/test";
 import { readFile } from "node:fs/promises";
 import { createInterface } from "node:readline";
+import { setupNativeDoubles } from "./native-doubles.mjs";
 const browser = await chromium.launch(
   process.env.CHROMIUM_PATH
     ? { executablePath: process.env.CHROMIUM_PATH, args: ["--no-sandbox"] }
@@ -16,6 +17,7 @@ await page.addScriptTag({
     "utf8",
   ),
 });
+await setupNativeDoubles(page);
 const button = (name) => page.getByRole("button", { name, exact: true });
 for await (const line of createInterface({ input: process.stdin })) {
   try {
@@ -73,9 +75,17 @@ for await (const line of createInterface({ input: process.stdin })) {
       );
       await expect(button("Try again")).toHaveCount(0);
     } else if (cmd.action === "save") {
-      if (!(await page.getByLabel("Time 1", { exact: true }).count())) {
+      if (!(await page.getByLabel("Time", { exact: true }).count())) {
         await button("Edit meal 1").click();
-        await button("Increase portions 1").click();
+        await page
+          .getByLabel("Portions", { exact: true })
+          .fill(
+            String(
+              Number(
+                await page.getByLabel("Portions", { exact: true }).inputValue(),
+              ) + 1,
+            ),
+          );
       }
       const ack = page.getByRole("checkbox", { name: "Use saved plan?" });
       if (await ack.count()) await ack.check();
@@ -83,17 +93,15 @@ for await (const line of createInterface({ input: process.stdin })) {
     } else if (cmd.action === "draft_actions") {
       await expect(page.locator(".meal")).toHaveCount(cmd.count);
       await button("Edit meal 1").click();
-      await page
-        .getByRole("switch", { name: "Meal enabled", exact: true })
-        .click();
+      await page.getByRole("switch", { name: "Enabled", exact: true }).click();
       await expect(page.getByRole("dialog")).toHaveCount(0);
-      await page.getByLabel("Time 1", { exact: true }).fill("09:13");
-      await button("Delete meal").click();
+      await page.getByLabel("Time", { exact: true }).fill("09:13");
+      await button("Delete").click();
       await button("Cancel").click();
-      await button("Back").click();
+      await button("Cancel").click();
       if (cmd.count < 10) {
         await button("Add meal").click();
-        await button("Back").click();
+        await button("Cancel").click();
       }
       await expect(page.locator(".meal")).toHaveCount(cmd.count);
       await expect(button("Save")).toHaveCount(0);
@@ -111,7 +119,7 @@ for await (const line of createInterface({ input: process.stdin })) {
     } else if (cmd.action === "busy")
       await expect(page.locator("section")).toHaveAttribute("inert", "");
     else if (cmd.action === "confirmed") {
-      await expect(page.locator(".status")).toHaveText("Saved");
+      await expect(page.locator(".status")).toHaveCount(0);
       await expect(page.locator("section")).not.toHaveAttribute("inert", "");
     } else if (cmd.action === "error") {
       await expect(page.locator(".status")).toHaveText(
@@ -125,12 +133,20 @@ for await (const line of createInterface({ input: process.stdin })) {
       await expect(button("Save")).toHaveCount(0);
     } else if (cmd.action === "edit") {
       await button("Edit meal 1").click();
-      await button("Increase portions 1").click();
+      await page
+        .getByLabel("Portions", { exact: true })
+        .fill(
+          String(
+            Number(
+              await page.getByLabel("Portions", { exact: true }).inputValue(),
+            ) + 1,
+          ),
+        );
     } else if (cmd.action === "delete") {
       await button(`Edit meal ${cmd.index ?? 1}`).click();
-      await button("Delete meal").click();
       const ack = page.getByRole("checkbox", { name: "Use saved plan?" });
       if (await ack.count()) await ack.check();
+      await button("Delete").click();
       await button("Delete").click();
     } else if (cmd.action === "add") {
       await button("Add meal").click();
@@ -139,7 +155,7 @@ for await (const line of createInterface({ input: process.stdin })) {
       await button("Save").click();
     } else if (cmd.action === "feed") {
       await button("Feed").click();
-      await button("Feed").click();
+      await button("Feed now").click();
     } else if (cmd.action === "close") break;
     else throw new Error(`Unknown action: ${cmd.action}`);
     console.log(

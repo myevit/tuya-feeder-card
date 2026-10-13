@@ -50,7 +50,7 @@ for (const order of ["before", "after"])
     await page.getByRole("switch", { name: "Enabled 1", exact: true }).click();
     await page.evaluate(() => {
       const c: any = document.querySelector("tuya-feeder-card");
-      const s = c.renderRoot.querySelector(".switch");
+      const s = c.renderRoot.querySelector(".meal-toggle");
       s.dispatchEvent(new Event("change"));
     });
     expect((await calls(page)).length).toBe(1);
@@ -67,7 +67,7 @@ for (const order of ["before", "after"])
       await expect(page.locator(".status")).toHaveText("Saving…");
       await incoming(page);
     }
-    await expect(page.locator(".status")).toHaveText("Saved");
+    await expect(page.locator(".status")).toHaveCount(0);
     await expect(
       page.getByRole("switch", { name: "Enabled 1", exact: true }),
     ).not.toBeChecked();
@@ -251,7 +251,7 @@ test("unknown timeout reverts switch; old handler cannot complete a newer explic
   await page.evaluate(() =>
     (window as any).resolve({ confirmed: true, revision: 2 }),
   );
-  await expect(page.locator(".status")).toHaveText("Saved");
+  await expect(page.locator(".status")).toHaveCount(0);
   expect((await calls(page)).length).toBe(2);
 });
 test("toggle uses latest reported index/revision and preserves all non-enabled fields", async ({
@@ -277,7 +277,7 @@ test("toggle uses latest reported index/revision and preserves all non-enabled f
   ]);
 });
 for (const width of [320, 640])
-  test(`standard header geometry and horizontally centered meal at ${width}`, async ({
+  test(`standard action header and entity title/subtitle meal geometry at ${width}`, async ({
     page,
   }) => {
     await page.setViewportSize({ width, height: 800 });
@@ -305,9 +305,10 @@ for (const width of [320, 640])
         iconLeft:
           icon.x - b.x - parseFloat(getComputedStyle(e).borderLeftWidth),
         gap: title.x - icon.right,
-        centerDifference: Math.abs(
-          time.y + time.height / 2 - detail.y - detail.height / 2,
-        ),
+        subtitleBelowTitle: detail.top >= time.bottom - 0.1,
+        alignedLabels: Math.abs(time.left - detail.left) < 0.1,
+        mealTitleLeft:
+          time.left - e.querySelector(".meal")!.getBoundingClientRect().left,
         overflow: document.documentElement.scrollWidth > innerWidth,
         detailHeight: detail.height,
       };
@@ -315,7 +316,9 @@ for (const width of [320, 640])
     expect(geometry.titleLeft).toBe(64);
     expect(geometry.iconLeft).toBe(11.5);
     expect(geometry.gap).toBe(7.5);
-    expect(geometry.centerDifference).toBeLessThan(1);
+    expect(geometry.subtitleBelowTitle).toBe(true);
+    expect(geometry.alignedLabels).toBe(true);
+    expect(geometry.mealTitleLeft).toBe(66);
     expect(geometry.overflow).toBe(false);
     expect(geometry.detailHeight).toBeLessThan(20);
   });
@@ -340,7 +343,7 @@ test("list switch directly sends one exact current-baseline update without edito
     page.getByRole("button", { name: "Save", exact: true }),
   ).toHaveCount(0);
   await expect(
-    page.getByRole("button", { name: "Back", exact: true }),
+    page.getByRole("button", { name: "Cancel", exact: true }),
   ).toHaveCount(0);
   await expect(page.getByRole("dialog")).toHaveCount(0);
   await expect(

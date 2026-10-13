@@ -1,5 +1,5 @@
 import { LitElement, html, css, nothing } from "lit";
-import { live } from "lit/directives/live.js";
+import { nativeComponents, showMealDialog } from "./native-dialog";
 const DAYS = [
   "monday",
   "tuesday",
@@ -42,6 +42,7 @@ type Config = {
 type Hass = {
   states: Record<string, { state: string; attributes: Record<string, any> }>;
   services?: Record<string, Record<string, unknown>>;
+  config?: { time_zone?: string };
   callService: (domain: string, service: string, data: unknown) => Promise<any>;
 };
 const clone = (m: Meal[]) => m.map((x) => ({ ...x, days: [...x.days] }));
@@ -136,6 +137,7 @@ export class TuyaFeederCard extends LitElement {
   conflict = false;
   acknowledged = false;
   feedPortions = 1;
+  nativeDialog?: any;
   private _hass?: Hass;
   private base = 0;
   private baseline: Meal[] = [];
@@ -203,8 +205,10 @@ export class TuyaFeederCard extends LitElement {
         this.conflict = true;
         this.view = "list";
         this.message = "Schedule changed. Reload to continue.";
+        this.nativeDialog?.invalidate();
       }
     } else this.load();
+    this.nativeDialog?.requestUpdate();
     this.requestUpdate();
   }
   get hass() {
@@ -288,7 +292,7 @@ export class TuyaFeederCard extends LitElement {
     this.load();
   }
   private async openEditor(i: number, enabled?: boolean) {
-    if (this.locked) return;
+    if (this.locked || this.view !== "list") return;
     this.load();
     this.operation = "update_meal";
     this.editing = i;
@@ -296,12 +300,19 @@ export class TuyaFeederCard extends LitElement {
     this.acknowledged = false;
     this.message = "";
     if (enabled !== undefined) this.edit("enabled", enabled);
-    await this.updateComplete;
-    this.renderRoot.querySelector<HTMLButtonElement>("[data-back]")?.focus();
+    try {
+      await nativeComponents();
+      showMealDialog(this);
+    } catch (e) {
+      this.view = "list";
+      this.message = "Couldn’t open editor. Refresh Home Assistant.";
+      console.error(e);
+    }
   }
   private async toggle(i: number, event: Event) {
     const input = event.target as HTMLInputElement;
-    const enabled = input.checked;
+    const enabled =
+      input.tagName === "BUTTON" ? !this.baseline[i]?.enabled : input.checked;
     input.checked =
       this.busy && this.toggling === i
         ? (this.sent?.[i].enabled ?? false)
@@ -317,9 +328,10 @@ export class TuyaFeederCard extends LitElement {
     this.edit("enabled", enabled);
     await this.save();
   }
-  private add() {
+  private async add() {
     if (
       this.locked ||
+      this.view !== "list" ||
       this.baseline.length >= Math.min(10, this.attrs.max_meals)
     )
       return;
@@ -333,6 +345,14 @@ export class TuyaFeederCard extends LitElement {
       ...this.draft,
       { days: [...DAYS], time: "23:59", portions: 1, enabled: false },
     ];
+    try {
+      await nativeComponents();
+      showMealDialog(this);
+    } catch (e) {
+      this.view = "list";
+      this.message = "Couldn’t open editor. Refresh Home Assistant.";
+      console.error(e);
+    }
   }
   private edit(key: keyof Meal, value: unknown) {
     if (this.locked || this.editing === null) return;
@@ -386,7 +406,7 @@ export class TuyaFeederCard extends LitElement {
     this.message = "Couldn’t save. Try again.";
     this.requestUpdate();
   }
-  private retry() {
+  private async retry() {
     if (
       this.busy ||
       this.conflict ||
@@ -399,6 +419,14 @@ export class TuyaFeederCard extends LitElement {
     this.failed = false;
     this.view = this.operation === "delete_meal" ? "delete" : "edit";
     this.message = "";
+    try {
+      await nativeComponents();
+      showMealDialog(this);
+    } catch (e) {
+      this.view = "list";
+      this.message = "Couldn’t open editor. Refresh Home Assistant.";
+      console.error(e);
+    }
   }
   private async save(deleting = false) {
     if (
@@ -542,11 +570,19 @@ export class TuyaFeederCard extends LitElement {
       this.helperBusy = false;
     }
   }
-  private confirmFeed() {
-    if (!this.feedReady) return;
+  private async confirmFeed() {
+    if (!this.feedReady || this.view !== "list") return;
     this.feedDose = this.selectedPortions;
     this.view = "feed";
     this.message = "";
+    try {
+      await nativeComponents();
+      showMealDialog(this);
+    } catch (e) {
+      this.view = "list";
+      this.message = "Couldn’t open confirmation. Refresh Home Assistant.";
+      console.error(e);
+    }
   }
   private async feed() {
     if (
@@ -586,25 +622,54 @@ export class TuyaFeederCard extends LitElement {
   getGridOptions() {
     return { columns: 12, min_columns: 6 };
   }
-  private acknowledgement() {
-    return this.attrs.snapshot_source === "restored"
-      ? html`<label class="field"
-          ><span>Use saved plan?</span
-          ><input
-            type="checkbox"
-            aria-label="Use saved plan?"
-            .checked=${this.acknowledged}
-            ?disabled=${this.locked}
-            @change=${(e: Event) => (this.acknowledged = (e.target as HTMLInputElement).checked)}
-        /></label>`
-      : nothing;
+  private lastFeedLabel() {
+    const value = this.attrs.last_feed_at;
+    if (typeof value !== "string" || !/(Z|[+-]\d{2}:\d{2})$/.test(value))
+      return "No recent feeding";
+    const fed = new Date(value),
+      now = new Date();
+    if (!Number.isFinite(fed.getTime()) || fed > now)
+      return "No recent feeding";
+    const zone = this.hass?.config?.time_zone;
+    const day = (d: Date) =>
+      new Intl.DateTimeFormat("en-CA", {
+        timeZone: zone,
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+      }).format(d);
+    const parts = new Intl.DateTimeFormat("en-CA", {
+      timeZone: zone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).formatToParts(now);
+    const get = (k: string) => Number(parts.find((p) => p.type === k)?.value);
+    const yesterday = new Date(
+      Date.UTC(get("year"), get("month") - 1, get("day") - 1, 12),
+    );
+    const yesterdayDay = new Intl.DateTimeFormat("en-CA", {
+      timeZone: "UTC",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(yesterday);
+    const time = new Intl.DateTimeFormat("en-GB", {
+      timeZone: zone,
+      hour: "2-digit",
+      minute: "2-digit",
+      hourCycle: "h23",
+    }).format(fed);
+    return day(fed) === day(now)
+      ? `Last fed ${time}`
+      : day(fed) === yesterdayDay
+        ? `Last fed yesterday · ${time}`
+        : `Last fed ${new Intl.DateTimeFormat("en-US", { timeZone: zone, month: "short", day: "numeric" }).format(fed)} · ${time}`;
   }
   render() {
     if (!this.config) return nothing;
-    const i = this.editing,
-      m = i === null ? undefined : this.draft[i];
     return html`<ha-card
-      part="card"
+      part="card outer"
       data-active=${String(this.scheduleActive)}
       @keydown=${(e: KeyboardEvent) => {
         if (e.key === "Escape" && this.view !== "list") {
@@ -613,172 +678,80 @@ export class TuyaFeederCard extends LitElement {
         }
       }}
     >
-      ${
-        this.view === "list"
-          ? html`<header
-                part=${this.config.manual_feed ? "header manual-feed row" : "header"}
-                class=${this.config.manual_feed ? "manual" : ""}
-              >
-                <ha-icon
-                  part="header-icon"
-                  .icon=${this.config.icon ?? this.config.feed_icon ?? "mdi:food-drumstick"}
-                ></ha-icon>
-                <h2 part="title">
-                  ${this.config.title ?? this.config.feed_title ?? "Feeder"}
-                </h2>
-                ${this.config.manual_feed ? html`<button part="control" aria-label="Decrease feeding portions" ?disabled=${!this.feedBounds || !Number.isInteger(this.selectedPortions) || this.selectedPortions <= this.feedBounds.min || this.helperBusy || this.feedBusy || this.busy} @click=${() => this.selectFeed(-1)}>−</button><output aria-label="Feeding portions">${Number.isInteger(this.selectedPortions) && this.feedBounds && this.selectedPortions >= this.feedBounds.min && this.selectedPortions <= this.feedBounds.max ? this.selectedPortions : "—"}</output><button part="control" aria-label="Increase feeding portions" ?disabled=${!this.feedBounds || !Number.isInteger(this.selectedPortions) || this.selectedPortions >= this.feedBounds.max || this.helperBusy || this.feedBusy || this.busy} @click=${() => this.selectFeed(1)}>+</button><button class="accent feed" ?disabled=${!this.feedReady} @click=${this.confirmFeed}>Feed</button>` : nothing}
-              </header>
-              <section
-                aria-label="Meal schedule"
-                ?inert=${this.busy || this.feedBusy}
-              >
-                ${
-                  this.writable || this.busy || this.failed || this.conflict
-                    ? this.baseline.map(
-                        (meal, n) =>
-                          html`<div class="meal" part="meal row">
-                            <button
-                              part="meal-button"
-                              class="open"
-                              data-meal=${n}
-                              aria-label=${`Edit meal ${n + 1}`}
-                              ?disabled=${this.locked || this.failed}
-                              @click=${() => this.openEditor(n)}
-                            >
-                              <span class="time" part="meal-time"
-                                >${meal.time}</span
-                              ><span class="detail"
-                                >Every day ·
-                                <span aria-label=${`Portions ${n + 1}`}
-                                  >${meal.portions}</span
-                                >
-                                portion${meal.portions === 1 ? "" : "s"}</span
-                              ></button
-                            ><input
-                              part="switch control"
-                              class="switch"
-                              type="checkbox"
-                              role="switch"
-                              aria-label=${`Enabled ${n + 1}`}
-                              .checked=${live(this.busy && this.toggling === n ? (this.sent?.[n].enabled ?? meal.enabled) : meal.enabled)}
-                              aria-busy=${String(this.busy && this.toggling === n)}
-                              ?disabled=${this.locked || this.failed}
-                              @change=${(e: Event) => this.toggle(n, e)}
-                            />
-                          </div>`,
-                      )
-                    : html`<div class="unavailable">Schedule unavailable</div>`
-                }
-                ${this.writable || this.busy || this.failed || this.conflict ? html`<button part="add control" class="add" aria-label="Add meal" title="Add meal" ?disabled=${this.locked || this.failed || this.baseline.length >= Math.min(10, this.attrs.max_meals)} @click=${this.add}><ha-icon icon="mdi:plus"></ha-icon></button>` : nothing}
-                ${!this.writable && !this.busy && !this.failed && !this.conflict ? html`<button @click=${this.reset}>Retry</button>` : nothing}
-              </section>`
-          : this.view === "feed"
-            ? html`<header part="header">
-                  <h2 part="title">
-                    Feed ${this.feedDose}
-                    portion${this.feedDose === 1 ? "" : "s"}?
-                  </h2>
-                </header>
-                <div class="actions">
-                  <button @click=${this.cancel}>Cancel</button
-                  ><button
-                    class="accent"
-                    ?disabled=${!this.feedReady}
-                    @click=${this.feed}
-                  >
-                    Feed
-                  </button>
-                </div>`
-            : this.view === "delete"
-              ? html`<header part="header">
-                    <h2 part="title">Delete meal?</h2>
-                  </header>
-                  <p>
-                    ${m?.time} · ${m?.portions}
-                    portion${m?.portions === 1 ? "" : "s"}
-                  </p>
-                  ${this.acknowledgement()}
-                  <div class="actions">
-                    <button @click=${this.cancel}>Cancel</button
-                    ><button
-                      class="danger"
-                      ?disabled=${this.locked || (this.attrs.snapshot_source === "restored" && !this.acknowledged)}
-                      @click=${() => this.save(true)}
+      ${html`<header
+          part=${this.config.manual_feed ? "header feed-container manual-feed row" : "header feed-container"}
+          data-active=${String(this.scheduleActive)}
+          class=${this.config.manual_feed ? "manual" : ""}
+        >
+          <ha-icon
+            part="header-icon"
+            .icon=${this.config.icon ?? this.config.feed_icon ?? "mdi:food-drumstick"}
+          ></ha-icon>
+          <div class="identity">
+            <h2 part="title">
+              ${this.config.title ?? this.config.feed_title ?? "Feeder"}
+            </h2>
+            <div class="last-feed" part="subtitle">${this.lastFeedLabel()}</div>
+          </div>
+          ${this.config.manual_feed ? html`<button part="control" aria-label="Decrease feeding portions" ?disabled=${!this.feedBounds || !Number.isInteger(this.selectedPortions) || this.selectedPortions <= this.feedBounds.min || this.helperBusy || this.feedBusy || this.busy} @click=${() => this.selectFeed(-1)}>−</button><output aria-label="Feeding portions">${Number.isInteger(this.selectedPortions) && this.feedBounds && this.selectedPortions >= this.feedBounds.min && this.selectedPortions <= this.feedBounds.max ? this.selectedPortions : "—"}</output><button part="control" aria-label="Increase feeding portions" ?disabled=${!this.feedBounds || !Number.isInteger(this.selectedPortions) || this.selectedPortions >= this.feedBounds.max || this.helperBusy || this.feedBusy || this.busy} @click=${() => this.selectFeed(1)}>+</button><button class="accent feed" ?disabled=${!this.feedReady} @click=${this.confirmFeed}>Feed</button>` : nothing}
+        </header>
+        ${this.message && !["Saved", "Feed requested"].includes(this.message) ? html`<div part="status" class="status" role="status">${this.message}</div>` : nothing}
+        <section
+          aria-label="Meal schedule"
+          ?inert=${this.busy || this.feedBusy}
+        >
+          ${
+            this.writable || this.busy || this.failed || this.conflict
+              ? this.baseline.map(
+                  (meal, n) =>
+                    html`<div
+                      class="meal"
+                      part="meal row"
+                      data-enabled=${String(meal.enabled)}
                     >
-                      Delete
-                    </button>
-                  </div>`
-              : m && i !== null
-                ? html` <header part="header" class="edit-header">
-                      <button data-back aria-label="Back" @click=${this.cancel}>
-                        <ha-icon icon="mdi:chevron-left"></ha-icon
-                        ><span>Back</span>
-                      </button>
-                      <h2 part="title">
-                        ${this.operation === "add_meal" ? "Add meal" : "Edit meal"}
-                      </h2>
                       <button
-                        part="save control"
-                        class="accent"
-                        data-save
-                        ?disabled=${!this.saveable}
-                        @click=${() => this.save()}
+                        class="meal-toggle"
+                        part="enabled control"
+                        role="switch"
+                        aria-label=${`Enabled ${n + 1}`}
+                        aria-checked=${String(meal.enabled)}
+                        aria-busy=${String(this.busy && this.toggling === n)}
+                        ?disabled=${this.locked || this.failed}
+                        @click=${(e: Event) => {
+                          e.stopPropagation();
+                          this.toggle(n, {
+                            target: e.currentTarget,
+                          } as unknown as Event);
+                        }}
                       >
-                        Save
+                        <ha-icon
+                          .icon=${this.config.icon ?? "mdi:food-drumstick"}
+                        ></ha-icon>
                       </button>
-                    </header>
-                    <section aria-label="Edit meal">
-                      <label class="field"
-                        ><span>Time</span
-                        ><input
-                          type="time"
-                          aria-label=${`Time ${i + 1}`}
-                          .value=${m.time}
-                          ?disabled=${this.locked}
-                          @input=${(e: Event) => this.edit("time", (e.target as HTMLInputElement).value)}
-                      /></label>
-                      <div class="field">
-                        <span>Portions</span>
-                        <div part="stepper" class="stepper">
-                          <button
-                            part="control"
-                            aria-label=${`Decrease portions ${i + 1}`}
-                            ?disabled=${this.locked || m.portions <= 1}
-                            @click=${() => this.edit("portions", m.portions - 1)}
+                      <button
+                        part="meal-button"
+                        class="open"
+                        data-meal=${n}
+                        aria-label=${`Edit meal ${n + 1}`}
+                        ?disabled=${this.locked || this.failed}
+                        @click=${() => this.openEditor(n)}
+                      >
+                        <span class="time" part="meal-time">${meal.time}</span
+                        ><span class="detail"
+                          >Every day ·
+                          <span aria-label=${`Portions ${n + 1}`}
+                            >${meal.portions}</span
                           >
-                            −</button
-                          ><output aria-label=${`Portions ${i + 1}`}
-                            >${m.portions}</output
-                          ><button
-                            part="control"
-                            aria-label=${`Increase portions ${i + 1}`}
-                            ?disabled=${this.locked || m.portions >= Math.min(60, this.attrs.max_portions)}
-                            @click=${() => this.edit("portions", m.portions + 1)}
-                          >
-                            +
-                          </button>
-                        </div>
-                      </div>
-                      <label class="field"
-                        ><span>Enabled</span
-                        ><input
-                          part="switch control"
-                          class="switch"
-                          type="checkbox"
-                          role="switch"
-                          aria-label="Meal enabled"
-                          .checked=${m.enabled}
-                          ?disabled=${this.locked}
-                          @change=${(e: Event) => this.edit("enabled", (e.target as HTMLInputElement).checked)}
-                      /></label>
-                      <div class="field">
-                        <span>Repeat</span><span class="detail">Every day</span>
-                      </div>
-                      ${this.acknowledgement()}${this.operation !== "add_meal" ? html`<button class="danger delete" @click=${() => (this.view = "delete")}>Delete meal</button>` : nothing}
-                    </section>`
-                : nothing
-      }
-      ${this.message ? html`<div part="status" class="status" role="status">${this.message}</div>` : nothing}
+                          portion${meal.portions === 1 ? "" : "s"}</span
+                        >
+                      </button>
+                    </div>`,
+                )
+              : html`<div class="unavailable">Schedule unavailable</div>`
+          }
+          ${this.writable || this.busy || this.failed || this.conflict ? html`<button part="add control" class="add" aria-label="Add meal" title="Add meal" ?disabled=${this.locked || this.failed || this.baseline.length >= Math.min(10, this.attrs.max_meals)} @click=${this.add}><ha-icon icon="mdi:plus"></ha-icon></button>` : nothing}
+          ${!this.writable && !this.busy && !this.failed && !this.conflict ? html`<button @click=${this.reset}>Retry</button>` : nothing}
+        </section>`}
       ${this.conflict ? html`<button @click=${this.reset}>Reload</button>` : this.failed ? html`<div class="actions"><button @click=${this.reset}>Cancel</button><button ?disabled=${!this.writable} @click=${this.retry}>Try again</button></div>` : nothing}
     </ha-card>`;
   }
@@ -792,7 +765,10 @@ export class TuyaFeederCard extends LitElement {
         var(--ha-font-family-body, system-ui)
       );
       font-size: 15px;
-      --accent: var(--feeder-accent-color, var(--primary-color, #03a9f4));
+      --accent: var(
+        --feeder-accent-color,
+        var(--accent-color, var(--primary-color, #03a9f4))
+      );
       --control: max(44px, var(--feeder-control-size, 44px));
     }
     * {
@@ -813,7 +789,7 @@ export class TuyaFeederCard extends LitElement {
         var(--ha-card-border-color, var(--divider-color, #ddd));
       box-shadow: var(--ha-card-box-shadow, none);
     }
-    ha-card[data-active="true"] {
+    header[data-active="true"] {
       background: var(--feeder-active-card-background, white);
       color: var(--feeder-active-text-color, black);
       --primary-text-color: var(--feeder-active-text-color, black);
@@ -1115,6 +1091,151 @@ export class TuyaFeederCard extends LitElement {
       }
       .meal .switch {
         margin-right: 8px;
+      }
+    }
+    ha-card {
+      padding: 0;
+      background: var(--feeder-outer-background, transparent);
+      border: 0;
+      box-shadow: none;
+    }
+    header:not(.edit-header):has(> ha-icon),
+    header.manual:not(.edit-header):has(> ha-icon) {
+      margin: 0 0 8px;
+      min-height: 68px;
+      border-radius: var(
+        --feeder-border-radius,
+        var(--ha-card-border-radius, 20px)
+      );
+      background: var(
+        --feeder-feed-background,
+        var(--feeder-card-background, rgba(0, 0, 0, 0.3))
+      );
+      box-shadow:
+        0 2px 4px rgba(0, 0, 0, 0.1),
+        0 6px 10px rgba(0, 0, 0, 0.08);
+    }
+    header[data-active="true"]:not(.edit-header):has(> ha-icon) {
+      background: var(--feeder-active-card-background, white);
+    }
+    header > ha-icon {
+      margin-left: 11.5px;
+      background: var(--feeder-header-icon-background, rgba(0, 0, 0, 0.2));
+      color: var(--feeder-header-icon-color, white);
+    }
+    .identity {
+      min-width: 0;
+    }
+    .last-feed {
+      font-size: 15px;
+      line-height: 1.3;
+      color: var(--secondary-text-color, #777);
+      white-space: normal;
+    }
+    header.manual:not(.edit-header):has(> ha-icon) {
+      grid-template-columns:
+        64px minmax(80px, 1fr) var(--control) 32px var(--control)
+        minmax(64px, 1fr);
+    }
+    .meal {
+      display: grid;
+      grid-template-columns: 66px minmax(0, 1fr);
+      gap: 0;
+      min-height: 69px;
+      margin: 8px 0;
+      background: var(
+        --feeder-meal-background,
+        var(--feeder-row-background, rgba(0, 0, 0, 0.3))
+      );
+      color: white;
+      box-shadow:
+        0 2px 4px rgba(0, 0, 0, 0.1),
+        0 6px 10px rgba(0, 0, 0, 0.08);
+    }
+    .meal[data-enabled="true"] {
+      background: var(
+        --feeder-meal-active-background,
+        var(--feeder-active-card-background, white)
+      );
+      color: var(--feeder-active-text-color, black);
+    }
+    .meal-toggle {
+      width: 66px;
+      height: 69px;
+      padding: 0;
+      display: grid;
+      place-items: center;
+      border-radius: 0;
+    }
+    .meal-toggle ha-icon {
+      width: 45px;
+      height: 45px;
+      padding: 10px;
+      --mdc-icon-size: 25px;
+      border-radius: 24px;
+      color: white;
+      background: rgba(0, 0, 0, 0.2);
+    }
+    .meal[data-enabled="true"] .meal-toggle ha-icon {
+      background: var(--feeder-active-icon-background, var(--accent));
+      color: var(--feeder-active-icon-color, white);
+    }
+    .open {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      justify-content: center;
+      gap: 0;
+      min-height: 69px;
+      padding: 0 10px 0 0;
+    }
+    .open .time {
+      font-size: var(--feeder-meal-time-font-size, 17px);
+      letter-spacing: normal;
+      font-weight: 500;
+      line-height: 1.3;
+    }
+    .open .detail {
+      font-size: 15px;
+      line-height: 1.3;
+      color: rgba(255, 255, 255, 0.5);
+    }
+    .meal[data-enabled="true"] .detail {
+      color: var(--feeder-active-muted-color, rgba(0, 0, 0, 0.5));
+    }
+    .status {
+      margin: 0 0 8px;
+      font-size: 15px;
+    }
+    @container (max-width:360px) {
+      header.manual:not(.edit-header):has(> ha-icon) {
+        grid-template-columns:
+          64px minmax(0, 1fr) var(--control) 28px var(--control)
+          55px;
+        padding-right: 0;
+      }
+      .manual .feed {
+        min-width: 50px;
+        margin-left: 5px;
+      }
+      .manual output {
+        min-width: 28px;
+      }
+      .last-feed {
+        font-size: 12px;
+      }
+      .meal {
+        gap: 0;
+      }
+      .open {
+        gap: 0;
+        padding: 0 10px 0 0;
+      }
+      .open .time {
+        font-size: var(--feeder-meal-time-font-size, 17px);
+      }
+      .open .detail {
+        font-size: 15px;
       }
     }
     [inert] {

@@ -3,7 +3,7 @@ import { attrs, setup, calls } from "./fixtures";
 const open = (page: any) =>
   page.getByRole("button", { name: "Edit meal 1", exact: true }).click();
 const plus = (page: any) =>
-  page.getByRole("button", { name: "Increase portions 1" }).click();
+  page.getByLabel("Portions", { exact: true }).fill("4");
 const save = (page: any) =>
   page.getByRole("button", { name: "Save", exact: true }).click();
 const changed = () =>
@@ -24,7 +24,7 @@ test("one logical update, unchanged rows preserved, empty ACK remains busy until
   await open(page);
   await plus(page);
   await save(page);
-  await expect(page.getByLabel("Time 1", { exact: true })).toHaveCount(0);
+  await expect(page.getByLabel("Time", { exact: true })).toHaveCount(0);
   await expect(page.locator("section")).toHaveAttribute("inert", "");
   expect(await calls(page)).toEqual([
     [
@@ -67,7 +67,7 @@ test("one logical update, unchanged rows preserved, empty ACK remains busy until
     meals: changed(),
     last_received_at: "2026-01-01T00:01:00Z",
   });
-  await expect(page.locator(".status")).toHaveText("Saved");
+  await expect(page.locator(".status")).toHaveCount(0);
   await expect(page.getByLabel("Portions 1", { exact: true })).toHaveText("4");
   await expect(page.getByLabel("Portions 2", { exact: true })).toHaveText("2");
   expect((await calls(page)).length).toBe(1);
@@ -116,7 +116,7 @@ test("watchdog retains edit; explicit retry reopens it and never automatically r
   await expect(page.locator(".status")).toHaveText("Couldn’t save. Try again.");
   expect((await calls(page)).length).toBe(1);
   await page.getByRole("button", { name: "Try again", exact: true }).click();
-  await expect(page.getByLabel("Portions 1", { exact: true })).toHaveText("4");
+  await expect(page.getByLabel("Portions", { exact: true })).toHaveValue("4");
   expect((await calls(page)).length).toBe(1);
   await save(page);
   expect((await calls(page)).length).toBe(2);
@@ -128,7 +128,7 @@ test("revision change even without dirty fields aborts editor and cannot delete 
   await setup(page);
   await open(page);
   await incoming(page, { ...attrs, revision: 2, meals: [attrs.meals[1]] });
-  await expect(page.getByLabel("Time 1", { exact: true })).toHaveCount(0);
+  await expect(page.getByLabel("Time", { exact: true })).toHaveCount(0);
   await expect(page.locator(".status")).toHaveText(
     "Schedule changed. Reload to continue.",
   );
@@ -136,7 +136,7 @@ test("revision change even without dirty fields aborts editor and cannot delete 
   await page.getByRole("button", { name: "Reload", exact: true }).click();
   await expect(page.locator(".time")).toHaveText("19:45");
   await open(page);
-  await page.getByRole("button", { name: "Delete meal", exact: true }).click();
+  await page.getByRole("button", { name: "Delete", exact: true }).click();
   await incoming(page, { ...attrs, revision: 3 });
   await expect(
     page.getByRole("button", { name: "Delete", exact: true }),
@@ -149,14 +149,15 @@ test("add is one disabled meal with same-level Save and no automatic service", a
 }) => {
   await setup(page);
   await page.getByRole("button", { name: "Add meal" }).click();
-  await expect(page.getByLabel("Time 3", { exact: true })).toHaveValue("23:59");
+  await expect(page.getByLabel("Time", { exact: true })).toHaveValue("23:59");
   await expect(
-    page.getByRole("switch", { name: "Meal enabled", exact: true }),
+    page.getByRole("switch", { name: "Enabled", exact: true }),
   ).not.toBeChecked();
-  await expect(page.getByLabel("Portions 3", { exact: true })).toHaveText("1");
-  await expect(
-    page.getByRole("button", { name: "Decrease portions 3" }),
-  ).toBeDisabled();
+  await expect(page.getByLabel("Portions", { exact: true })).toHaveValue("1");
+  await expect(page.getByLabel("Portions", { exact: true })).toHaveAttribute(
+    "min",
+    "1",
+  );
   expect(await calls(page)).toEqual([]);
   await save(page);
   expect(await calls(page)).toEqual([
@@ -186,23 +187,24 @@ test("unchanged/reverted edit and invalid time disable Save, bounds clamp safely
     page.getByRole("button", { name: "Save", exact: true }),
   ).toBeDisabled();
   await plus(page);
-  await page.getByRole("button", { name: "Decrease portions 1" }).click();
+  await page.getByLabel("Portions", { exact: true }).fill("3");
   await expect(
     page.getByRole("button", { name: "Save", exact: true }),
   ).toBeDisabled();
-  await page.getByLabel("Time 1", { exact: true }).fill("");
+  await page.getByLabel("Time", { exact: true }).fill("");
   await expect(
     page.getByRole("button", { name: "Save", exact: true }),
   ).toBeDisabled();
-  await page.getByRole("button", { name: "Back", exact: true }).click();
+  await page.getByRole("button", { name: "Cancel", exact: true }).click();
   await incoming(page, {
     ...attrs,
     revision: 2,
     meals: [{ ...attrs.meals[0], portions: 60 }],
   });
   await open(page);
+  await page.getByLabel("Portions", { exact: true }).fill("61");
   await expect(
-    page.getByRole("button", { name: "Increase portions 1" }),
+    page.getByRole("button", { name: "Save", exact: true }),
   ).toBeDisabled();
   expect(await calls(page)).toEqual([]);
 });
@@ -295,6 +297,6 @@ test("service error preserves failed draft and only explicit retry can send agai
   await save(page);
   await expect(page.locator(".status")).toHaveText("Couldn’t save. Try again.");
   await page.getByRole("button", { name: "Try again", exact: true }).click();
-  await expect(page.getByLabel("Portions 1", { exact: true })).toHaveText("4");
+  await expect(page.getByLabel("Portions", { exact: true })).toHaveValue("4");
   expect((await calls(page)).length).toBe(1);
 });

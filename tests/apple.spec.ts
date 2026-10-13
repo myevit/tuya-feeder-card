@@ -16,7 +16,7 @@ for (const width of [640, 320])
         title: getComputedStyle(el.getRootNode().querySelector("h2")).fontSize,
       }));
     expect(geometry).toEqual({
-      font: width === 320 ? "26px" : "32px",
+      font: "17px",
       weight: "500",
       title: "18px",
     });
@@ -30,11 +30,10 @@ for (const width of [640, 320])
     await page
       .getByRole("button", { name: "Edit meal 1", exact: true })
       .click();
-    for (const name of ["Increase portions 1", "Decrease portions 1"]) {
-      const b = (await page.getByRole("button", { name }).boundingBox())!;
-      expect(b.width).toBeGreaterThanOrEqual(44);
-      expect(b.height).toBeGreaterThanOrEqual(44);
-    }
+    await expect(page.getByLabel("Portions", { exact: true })).toHaveValue("3");
+    await expect(
+      page.getByRole("button", { name: "Cancel", exact: true }),
+    ).toBeVisible();
     expect(
       await page.evaluate(
         () => document.documentElement.scrollWidth > innerWidth,
@@ -44,7 +43,7 @@ for (const width of [640, 320])
       path: `test-results/kiosk-edit-mock-${width}.png`,
       fullPage: true,
     });
-    await page.getByRole("button", { name: "Back", exact: true }).click();
+    await page.getByRole("button", { name: "Cancel", exact: true }).click();
     expect(await calls(page)).toEqual([]);
   });
 
@@ -56,7 +55,7 @@ test("optional CSS variables and shadow parts override real component; defaults 
     .locator(".time")
     .first()
     .evaluate((el) => getComputedStyle(el).fontSize);
-  expect(before).toBe("32px");
+  expect(before).toBe("17px");
   await page.addStyleTag({
     content:
       "tuya-feeder-card { --feeder-meal-time-font-size: 38px; --feeder-accent-color: rgb(90, 30, 120); } tuya-feeder-card::part(title) { color: rgb(10, 80, 90); }",
@@ -70,10 +69,10 @@ test("optional CSS variables and shadow parts override real component; defaults 
   expect(
     await page.locator("h2").evaluate((el) => getComputedStyle(el).color),
   ).toBe("rgb(10, 80, 90)");
-  await page.getByRole("button", { name: "Edit meal 1", exact: true }).click();
   expect(
     await page
-      .getByRole("button", { name: "Save", exact: true })
+      .locator('.meal[data-enabled="true"] ha-icon')
+      .first()
       .evaluate((el) => getComputedStyle(el).backgroundColor),
   ).toBe("rgb(90, 30, 120)");
   expect(
@@ -145,9 +144,6 @@ test("safe appearance config and visual editor fields; reject CSS injection", as
   expect(result.schema).toContain("portions_entity");
   expect(result.emitted.appearance.accent_color).toBe("#123456");
   await page.getByRole("button", { name: "Edit meal 1", exact: true }).click();
-  const b = (await page
-    .getByRole("button", { name: "Increase portions 1" })
-    .boundingBox())!;
-  expect(b.width).toBeGreaterThanOrEqual(44);
+  await expect(page.getByLabel("Portions", { exact: true })).toBeVisible();
   expect(await calls(page)).toEqual([]);
 });

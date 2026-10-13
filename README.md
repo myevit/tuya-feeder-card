@@ -1,108 +1,79 @@
 # Tuya Feeder Card
 
-A touchscreen Home Assistant card for the device-owned daily schedule exposed by [Tuya Feeder](https://github.com/myevit/tuya-feeder). Version **0.2.2** requires integration **0.2.0** for per-meal operations and optional manual feeding.
+A touchscreen Home Assistant card for the device-owned daily schedule exposed by [Tuya Feeder](https://github.com/myevit/tuya-feeder). Version **0.2.4** uses integration **0.2.1** for the last-feeding timestamp; integration 0.2.0 remains compatible with schedule/manual controls but has no global feeding timestamp.
 
-The list has large meal times, independent enable switches and a compact **+** after the meals. Tapping a meal replaces the list **inside the card**. **Save** closes the editor and sends one meal operation. **Back**, Escape or Cancel discards the edit without sending anything. There is no popup, second confirmation for an ordinary Save, or global schedule draft.
-
-![Synthetic in-card editor](docs/mock-edit.png)
+The transparent wrapper contains independent standard-theme surfaces: one optional manual-feed container and a tile for each meal. A meal's **left icon circle** immediately toggles its enabled state. Its **time/title and subtitle** open a Home Assistant-native meal dialog. No separate right-hand switch, global Save or persistent status footer is shown.
 
 ## HACS installation
 
-1. Install the Tuya Feeder integration and configure its local feeder transport.
-2. In HACS → Custom repositories, add `https://github.com/myevit/tuya-feeder-card` as **Dashboard**.
-3. Download the latest release and let HACS add its JavaScript module resource. Refresh the dashboard after an update; avoid duplicate resources.
-4. Add **Tuya Feeder** with the visual editor, selecting the integration's schedule sensor.
+1. Install/configure the Tuya Feeder integration.
+2. In HACS → Custom repositories add `https://github.com/myevit/tuya-feeder-card` as **Dashboard**.
+3. Download a release and let HACS add its module resource. Refresh after an update; avoid duplicate resources.
+4. Add **Tuya Feeder** with the visual editor, selecting its schedule sensor.
 
 ```yaml
 type: custom:tuya-feeder-card
 entity: sensor.feeder_meal_plan
 title: Feeder
 icon: mdi:food-drumstick
-```
-
-The integration owns discovery, schedule decoding, transport and confirmation. This card does not create feeding automations, duplicate a device schedule or import arbitrary raw datapoints.
-
-## Editing meals
-
-- Tap a meal for time, portions, enabled status and read-only **Every day**. Other weekday combinations are not advertised as supported.
-- The list switch immediately sends one `update_meal` operation for that meal at the current reported revision. It does not open an editor, confirmation, or global Save. The pending switch is busy and conflicting actions are disabled until handler completion plus a genuine matching incoming report.
-- **+** opens a new, disabled meal at **23:59**, with **one portion**. Cancel sends nothing. At the device's meal limit (at most ten), adding is disabled.
-- **Delete meal** replaces the editor with an in-card Cancel/Delete confirmation. Confirmed Delete sends one logical deletion.
-- When using a restored plan, explicitly check **Use saved plan?** before editor Save/Delete. A direct list-switch tap is itself explicit intent and supplies the strict boolean acknowledgement only when the validated restored-snapshot capability permits it. Invalid, uncertain, unsupported, and stale plans remain blocked by the backend.
-- During confirmation the list shows **Saving…** and conflicting actions are disabled. A service ACK alone is not success. **Saved** requires handler completion and a newer, genuine received matching plan.
-- Editor failure retains the edited meal. **Try again** reopens that edit; only another explicit Save can resend. Switch failure/unknown outcome returns to the actual reported setting with a plain error, not an editor or retry flow. Nothing automatically retries. A revision change while editing requires Reload and blocks stale indices; a conflicting incoming plan during a switch operation cannot overwrite another meal or falsely show success.
-- Unknown, malformed, unsupported or unavailable schedules show **Schedule unavailable** with Retry; they never appear successfully loaded.
-
-The front of the card deliberately omits revision numbers, provenance and technical warnings. Debug failures are logged to the browser console. A locally received schedule is not an active cloud query or proof that food physically dispensed. The integration remains the safety authority, including restored-plan acknowledgement and uncertain transport handling.
-
-## Optional manual feeding
-
-```yaml
-type: custom:tuya-feeder-card
-entity: sensor.feeder_meal_plan
 manual_feed: true
-title: Feeder
-icon: mdi:food-drumstick
-portions_entity: input_number.feeder_portions  # optional existing persistent helper
+portions_entity: input_number.feeder_portions # optional existing helper
 ```
 
-This merges manual controls into the single identity header: icon/title, minus/count/plus and **Feed**. No second schedule title or icon is added. `feed_title` and `feed_icon` remain deprecated fallback aliases; explicit `title` and `icon` take precedence. Only the separate controls are clickable. Changing portions never feeds. **Feed** opens an in-card confirmation of the exact dose; Cancel sends nothing and the second **Feed** sends one `tuya_feeder.feed` call. The backend validates 1–60 portions and rejects duplicate/uncertain requests. The UI says **Feed requested**, not that food physically dispensed.
+The integration owns discovery, validation, transport and confirmation. This card creates no feeding automations and never imports raw datapoints.
 
-The row is off by default and its Feed action is disabled unless the integration advertises `supports_manual_feed`. With a helper, existing selection and bounds are preserved: increments/decrements use Home Assistant's authoritative `input_number.increment`/`decrement`, never overwrite helper configuration or create/reset a helper. Use an integer helper with step 1 and bounds within 1–60. Without a helper the count is local to this card session. Missing or out-of-range helper values are not silently clamped into a feed request.
+## Meals and native dialogs
 
-## Appearance and visual editor
+- The icon circle is a separate accessible switch-button. One tap sends one `update_meal` at the current reported revision, without opening an editor or adding a confirmation/global Save. Keyboard activation has the same isolation. Activity/color uses the actual reported enabled state, not a draft or optimistic setting.
+- The title/body opens time, portions and enabled fields in native `ha-dialog`/`ha-form` controls. Every-day operation remains the supported repeat mode. **Save** closes the dialog and sends one meal operation. Cancel, Escape, the native X and available backdrop dismissal discard drafts and send nothing.
+- **+** opens the same native Add dialog with a disabled meal at 23:59 and one portion. At the device limit (at most ten), adding is disabled.
+- **Delete** changes the native shell to a destructive Cancel/Delete confirmation. Only the final Delete sends a logical deletion.
+- A restored plan requires explicit **Use saved plan?** acknowledgement before editor Save/Delete. Direct icon intent supplies strict acknowledgement only with validated restored-write capability. Invalid, uncertain, unsupported and stale plans remain blocked.
+- Inline **Saving…** remains until real handler completion plus a newer genuine matching report. A command/service ACK alone is not success. No persistent Saved/source/status footer is rendered.
+- Editor failure retains the draft. **Try again** reopens it; only a new explicit Save can resend. Toggle failure returns to actual reported state with a plain error. Nothing automatically retries. A concurrent plan change invalidates the dialog and requires Reload.
+- Unknown/malformed/unavailable schedules stay explicitly unavailable, never falsely loaded.
 
-The built-in layout needs **no card-mod**, imports or separate frontend dependency. It inherits HA primary/text/card/divider colors, radius, shadow and font. The header uses standard 18px medium text, a 25px icon in a 45px circle and a separate 44px Add control after the meals; the single header is 68px tall, including optional manual controls. The default large meal time is 32px. All independent touch controls are at least 44px.
+### Frontend compatibility boundary
 
-The visual editor includes the following optional `appearance` fields. Values are single CSS property values, not stylesheets, HTML or URLs. Invalid/injection-like values are rejected.
+This uses HA's real dialog shell, native form selectors and native footer/buttons, not a hand-made overlay or Browser Mod. The `show-dialog` event and HA component tags are **internal frontend APIs**, not a supported arbitrary-field extension of a sensor's stock more-info dialog. The adapter is verified against frontend **20260930.3** (HA 2026.10). It reuses controls already loaded by Lovelace and, if needed, the built-in entities-card editor loader. If required native components are unavailable, it reports an error and sends nothing; it does not silently substitute an imitation overlay.
+
+After a frontend update, reverify shell lifecycle, selector/context requirements and show-dialog routing. Primary version-pinned sources: [dialog shell](https://github.com/home-assistant/frontend/blob/20260930.3/src/components/ha-dialog.ts), [dialog manager](https://github.com/home-assistant/frontend/blob/20260930.3/src/dialogs/make-dialog-manager.ts), [form](https://github.com/home-assistant/frontend/blob/20260930.3/src/components/ha-form/ha-form.ts), and [time selector](https://github.com/home-assistant/frontend/blob/20260930.3/src/components/ha-selector/ha-selector-time.ts). Unit tests use explicitly labeled native-control doubles; separate acceptance rendered the actual installed frontend components, including zero-write Escape/X/backdrop/Cancel and an explicit one-call Save. That acceptance is mock transport, not a physical feeding test.
+
+## Last feeding
+
+The subtitle uses the integration's persistent `last_feed_at`: `Last fed 12:00`, `Last fed yesterday · 17:30`, or `Last fed Oct 12 · 17:30`, formatted in HA's configured timezone. Unknown/invalid/future timestamps show **No recent feeding**.
+
+This is the most recent **observed local feeding activity** (audited DP4 inactive→feeding event), irrespective of whether initiated by the device schedule, physical button, app or HA. It is not inferred from DP1 schedule receipt, helper edits, script history, command ACK, DP14's cached portions or HA attribute timestamps. It does not independently prove food delivery. Feeding while HA/local transport is offline cannot be observed; an initial cached snapshot is not dated as a new feed. No historical date is invented when upgrading.
+
+## Manual feeding
+
+The manual surface has one icon/title/subtitle identity followed by minus/count/plus and **Feed**. `feed_title`/`feed_icon` remain deprecated fallback aliases; explicit title/icon win. Only controls actuate; the outer wrapper is inert.
+
+Changing portions never feeds. **Feed** opens native confirmation of the exact captured dose; Cancel/Escape/X/backdrop send nothing. **Feed now** sends one `tuya_feeder.feed`. The backend enforces 1–60 portions, duplicate/uncertain guards and no automatic retry. Feed request success is not asserted as physical delivery.
+
+Feed is disabled without `supports_manual_feed`. Existing helper selection/bounds remain intact: use authoritative HA increment/decrement, never rewrite helper configuration. Use integer step 1 with bounds within 1–60. Without a helper the count is card-session-local. Missing/out-of-range values are not silently clamped.
+
+## Appearance
+
+No card-mod or external frontend dependency is required. Each meal uses a 45px icon circle, 17px medium time/title, 15px subtitle and 69px minimum surface height. Touch targets are at least 44px. Active surfaces use white, black title, gray subtitle and accent circle/white icon; inactive surfaces use the standard dark translucent surface, white title, muted subtitle and dark icon circle. Meal activity is individual; the manual-feed surface is active if any valid reported meal is enabled. The outer wrapper remains transparent.
+
+Optional single-property `appearance` values reject CSS/HTML/URL injection:
 
 ```yaml
 appearance:
-  accent_color: var(--primary-color)
+  accent_color: var(--accent-color)
   border_radius: 20px
   font_family: system-ui
   header_font_size: 18px
-  meal_time_font_size: 32px
-  row_background: rgba(128, 128, 128, 0.06)
-  card_background: var(--ha-card-background)
-  control_size: 48px
+  meal_time_font_size: 17px
+  row_background: rgba(0, 0, 0, 0.3)
+  card_background: rgba(0, 0, 0, 0.3)
+  control_size: 44px
 ```
 
-| Field / stable CSS variable | Default |
-| --- | --- |
-| `accent_color` / `--feeder-accent-color` | HA `--primary-color` |
-| `border_radius` / `--feeder-border-radius` | HA `--ha-card-border-radius`, else 20px |
-| `font_family` / `--feeder-font-family` | HA body font, else system-ui |
-| `header_font_size` / `--feeder-header-font-size` | 18px |
-| `meal_time_font_size` / `--feeder-meal-time-font-size` | 32px |
-| `row_background` / `--feeder-row-background` | Theme text tint at 4.5% |
-| `card_background` / `--feeder-card-background` | HA card background |
-| `control_size` / `--feeder-control-size` | 44px minimum |
+Stable host variables: `--feeder-accent-color`, `--feeder-border-radius`, `--feeder-font-family`, `--feeder-header-font-size`, `--feeder-meal-time-font-size`, `--feeder-row-background`, `--feeder-card-background`, `--feeder-control-size` (44px minimum). Row/card backgrounds customize inactive meal/feed surfaces; they no longer paint the outer wrapper. Additional hooks: `--feeder-outer-background` (transparent), `--feeder-feed-background`, `--feeder-header-icon-background`, `--feeder-header-icon-color`, `--feeder-active-card-background`, `--feeder-active-text-color`, `--feeder-active-muted-color`, `--feeder-active-icon-background`, `--feeder-active-icon-color`. Active defaults are white/black/gray/accent/white. Native dialog controls use HA's own theme, not card-local appearance overrides.
 
-The card becomes active only when a valid confirmed integration plan has at least one enabled meal. Disabled/empty, invalid, unknown and unavailable plans are inactive. Valid restored plans may be active but are not treated as fresh receipts; the historical-write acknowledgement remains unchanged. Editor toggles do not change activity until incoming confirmed attributes change.
-
-Inactive styling uses the HA card background/text, a transparent icon background and the standard custom-card default gray icon (`#9da0a2`), **not accent**. Active styling follows the standard state-on tile: white card, black text, gray secondary text, accent-colored icon circle and white icon. The entire header is not accent-colored. Feed remains an independent accent action.
-
-Additional CSS-only hooks: `--feeder-header-icon-background` (transparent), `--feeder-header-icon-color` (default gray), `--feeder-active-card-background` (white), `--feeder-active-text-color` (black), `--feeder-active-muted-color` (gray), `--feeder-active-icon-background` (HA accent/primary) and `--feeder-active-icon-color` (white). Set the active hooks on the host through theme CSS/card-mod; no backend or card-mod dependency is introduced. Avoid extreme font/control sizes on narrow dashboards; 44px remains the minimum hit target.
-
-Stable shadow parts: `card` (with `data-active="true|false"`), `header`, `header-icon`, `title`, `meal`, `row`, `meal-time`, `meal-button`, `switch`, `stepper`, `control`, `save`, `add`, `manual-feed`, `status`. Theme/custom CSS can target, for example, `tuya-feeder-card::part(title)` or `tuya-feeder-card::part(save)` without relying on internal class names.
-
-### Optional card-mod
-
-If card-mod is **already installed**, its normal `ha-card`/`hui-card` support can apply `card_mod` styles to this card. No special import/bootstrap or backend manifest dependency is needed. Existing `card_mod` configuration is preserved by the visual editor. Example:
-
-```yaml
-type: custom:tuya-feeder-card
-entity: sensor.feeder_meal_plan
-card_mod:
-  style: |
-    :host, ha-card {
-      --feeder-meal-time-font-size: 36px;
-      --feeder-row-background: rgba(128, 128, 128, 0.08);
-    }
-```
-
-Appearance options and HA themes are the simplest route and work without card-mod. Card-mod's [developer guide](https://github.com/thomasloven/lovelace-card-mod/blob/master/README-developers.md) documents `applyToElement` for custom elements that need explicit attachment; this card contains `ha-card` and uses the standard supported automatic attachment instead. See also [application rules](https://github.com/thomasloven/lovelace-card-mod/blob/master/README-application.md). CSS custom-property and shadow-part overrides are exercised against the actual bundled component in Chromium; screenshots are synthetic, not authenticated live-dashboard captures.
+Shadow parts: `card`, `header`, `manual-feed`, `header-icon`, `title`, `subtitle`, `meal`, `row`, `meal-time`, `meal-button`, `enabled`, `control`, `add`, `status`. `data-active` describes manual-surface activity; each row has `data-enabled`. Optional existing card-mod can override these without backend changes; no card-mod is imported or required.
 
 ## Service contract
 
@@ -111,9 +82,9 @@ Appearance options and HA themes are the simplest route and work without card-mo
 - `delete_meal`: `{entity_id, expected_revision, meal_index}`
 - `feed`: `{entity_id, portions}`
 
-Meal: `{days: [all seven lowercase weekday names], time: "HH:MM", portions: integer, enabled: boolean}`. Indices are zero-based. Restored schedule operations include `acknowledge_restored_snapshot: true` after the explicit editor checkbox or direct list-switch intent, only with validated restored-write capability. The backend merges the logical meal operation into its current full plan, preserves other rows and performs the full-DP encoding. The legacy integration `set_schedule` service remains compatible but the v0.2 card does not use it.
+Meal: `{days: [all seven lowercase names], time: "HH:MM", portions: integer, enabled: boolean}`. Indices are zero-based. Restored operations add strict `acknowledge_restored_snapshot: true` only after explicit editor acknowledgement or permitted direct icon intent. Backend merges preserve untouched records. The legacy integration `set_schedule` remains compatible but this card does not call it.
 
-## Development and verification
+## Development
 
 ```sh
 npm ci
@@ -123,4 +94,4 @@ npm test
 python3 scripts/check_public.py
 ```
 
-`CHROMIUM_PATH` may point to an existing Chromium executable. CI verifies TypeScript/build determinism, browser safety/interaction tests, public-data hygiene, HACS validation and the paired integration's actual HA service/state contract. The bridge defers the mocked frontend service Promise until the HA harness reports real handler completion; matching state alone cannot falsely finish a Save. All test devices, plans and screenshots in this repository are synthetic; no physical feed or live schedule write is part of tests or installation.
+`CHROMIUM_PATH` may select installed Chromium. CI verifies deterministic TypeScript/build, browser safety/interaction, public-data hygiene, HACS and actual paired HA handler/state contracts. The bridge resolves its mocked service Promise only after the real HA harness handler finishes, so matching attributes alone cannot finish Save. Public fixtures are synthetic; tests/install issue no physical feeds or live schedule writes.
