@@ -2,6 +2,12 @@
 
 A compact Lit dashboard card for **device-owned daily meal plans**. This card is not a feeder integration and offers **no Feed action** or Home Assistant recurring-feed automation. Pair it with [Tuya Feeder](https://github.com/myevit/tuya-feeder).
 
+## Synthetic preview
+
+![Synthetic mock feeder schedule card — not a live Home Assistant dashboard](docs/mock-wide.png)
+
+This image renders only invented test data in an isolated browser. It contains no real household schedule, device configuration or live capture.
+
 ## Install
 
 In HACS, add `https://github.com/myevit/tuya-feeder-card` as a custom **Dashboard** repository, then download Tuya Feeder Card. This repository is not claimed to be in the default HACS store. Reload the frontend and, if necessary, add `/hacsfiles/tuya-feeder-card/tuya-feeder-card.js` as a JavaScript module resource. Manual installation: download the release asset into `www/tuya-feeder-card.js`, add `/local/tuya-feeder-card.js` as a module resource, and reload the browser. No HA core restart is required for a card resource.

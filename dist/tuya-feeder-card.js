@@ -148,6 +148,7 @@ var R=globalThis,O=R.ShadowRoot&&(R.ShadyCSS===void 0||R.ShadyCSS.nativeShadow)&
       padding: 0 12px;
     }
     .meal {
+      box-sizing: border-box;
       height: 68px;
       display: flex;
       align-items: center;

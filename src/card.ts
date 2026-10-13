@@ -394,6 +394,7 @@ export class TuyaFeederCard extends LitElement {
       padding: 0 12px;
     }
     .meal {
+      box-sizing: border-box;
       height: 68px;
       display: flex;
       align-items: center;
