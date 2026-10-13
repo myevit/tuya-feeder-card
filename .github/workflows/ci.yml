@@ -28,3 +28,27 @@ jobs:
       - uses: hacs/action@main
         with:
           category: plugin
+  integration-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: myevit/tuya-feeder
+          ref: main
+          path: .contract-integration
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/setup-python@v7.0.0
+        with:
+          python-version: '3.13'
+      - run: npm ci && npm run build && npx playwright install --with-deps chromium
+      - run: pip install -r requirements_test.txt
+        working-directory: .contract-integration
+      - run: git rev-parse HEAD && git -C .contract-integration rev-parse HEAD
+      - run: pytest -q tests/test_card_contract.py
+        working-directory: .contract-integration
+        env:
+          TUYA_FEEDER_CARD_DIR: ${{ github.workspace }}

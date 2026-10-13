@@ -13,9 +13,12 @@ export const attrs = {
     { days, time: "08:15", portions: 3, enabled: true },
     { days, time: "19:45", portions: 2, enabled: false },
   ],
-  revision: "mock-r1",
+  revision: 1,
   last_received_at: "2026-01-01T00:00:00Z",
-  observation_kind: "confirmed",
+  observation_kind:
+    "last locally reported snapshot; not an active schedule query",
+  schedule_valid: true,
+  snapshot_source: "received",
   pending: false,
   error: null,
   supports_schedule_write: true,
@@ -69,7 +72,7 @@ test("one complete payload; empty ACK stays busy; genuine report confirms", asyn
     [
       "tuya_feeder",
       "set_schedule",
-      { entity_id: "sensor.mock_feeder", expected_revision: "mock-r1", meals },
+      { entity_id: "sensor.mock_feeder", expected_revision: 1, meals },
     ],
   ]);
   await expect(
@@ -78,24 +81,89 @@ test("one complete payload; empty ACK stays busy; genuine report confirms", asyn
   await expect(page.locator("section")).toHaveAttribute("inert", "");
   await incoming(page, {
     ...attrs,
-    revision: "mock-r2",
+    revision: 2,
     meals,
-    observation_kind: "ack",
+    schedule_valid: false,
   });
   await expect(page.locator("section")).toHaveAttribute("inert", "");
   await incoming(page, {
     ...attrs,
-    revision: "mock-r2",
+    revision: 2,
     meals,
     last_received_at: "2026-01-01T00:01:00Z",
   });
   await expect(page.locator(".status")).toContainText("confirmed by incoming");
   expect((await calls(page)).length).toBe(1);
 });
+test("pending transient errors and old receipts never complete Save", async ({
+  page,
+}) => {
+  await setup(page);
+  await page.getByRole("button", { name: "Increase portions 1" }).click();
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await page.getByRole("button", { name: "Confirm Save" }).click();
+  const meals = structuredClone(attrs.meals);
+  meals[0].portions = 4;
+  await incoming(page, { ...attrs, pending: true, error: "transient report" });
+  await expect(page.locator("section")).toHaveAttribute("inert", "");
+  await incoming(page, { ...attrs, meals });
+  await expect(page.locator("section")).toHaveAttribute("inert", "");
+  await incoming(page, { ...attrs, meals, revision: 2 });
+  await expect(page.locator("section")).toHaveAttribute("inert", "");
+  await incoming(page, {
+    ...attrs,
+    meals,
+    revision: 2,
+    last_received_at: "2026-01-01T00:01:00Z",
+  });
+  await expect(page.locator(".status")).toContainText("confirmed by incoming");
+});
+test("missing HA updates time out without retry or discarding draft", async ({
+  page,
+}) => {
+  await page.clock.install();
+  await setup(page);
+  await page.getByRole("button", { name: "Increase portions 1" }).click();
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await page.getByRole("button", { name: "Confirm Save" }).click();
+  await page.clock.fastForward(21000);
+  await expect(page.locator(".status")).toContainText("Confirmation timed out");
+  await expect(page.locator("section")).not.toHaveAttribute("inert", "");
+  await expect(page.getByLabel("Portions 1", { exact: true })).toHaveText("4");
+  expect((await calls(page)).length).toBe(1);
+});
+test("reverted draft sends nothing", async ({ page }) => {
+  await setup(page);
+  await page.getByRole("button", { name: "Increase portions 1" }).click();
+  await page.getByRole("button", { name: "Decrease portions 1" }).click();
+  await expect(
+    page.getByRole("button", { name: "Save", exact: true }),
+  ).toBeDisabled();
+  expect(await calls(page)).toEqual([]);
+});
+test("integration descriptive received snapshot is editable", async ({
+  page,
+}) => {
+  await setup(page, {
+    ...attrs,
+    revision: 1,
+    observation_kind:
+      "last locally reported snapshot; not an active schedule query",
+    schedule_valid: true,
+    snapshot_source: "received",
+  });
+  await expect(
+    page.getByRole("button", { name: "Increase portions 1" }),
+  ).toBeEnabled();
+  await page.getByRole("button", { name: "Increase portions 1" }).click();
+  await expect(
+    page.getByRole("button", { name: "Save", exact: true }),
+  ).toBeEnabled();
+});
 test("stale revision blocks save until explicit reload", async ({ page }) => {
   await setup(page);
   await page.getByRole("button", { name: "Increase portions 1" }).click();
-  await incoming(page, { ...attrs, revision: "mock-r2" });
+  await incoming(page, { ...attrs, revision: 2 });
   await expect(page.locator(".status")).toContainText("changed while editing");
   await expect(
     page.getByRole("button", { name: "Save", exact: true }),
@@ -124,11 +192,11 @@ test("add is disabled safe default; ten row and portion bounds", async ({
     page.getByRole("button", { name: "Decrease portions 10", exact: true }),
   ).toBeDisabled();
   expect(await calls(page)).toEqual([]);
-  await incoming(page, { ...attrs, revision: "mock-r2" });
+  await incoming(page, { ...attrs, revision: 2 });
   await page.getByRole("button", { name: "Reload schedule" }).click();
   await incoming(page, {
     ...attrs,
-    revision: "mock-r3",
+    revision: 3,
     meals: [{ ...attrs.meals[0], portions: 60 }],
   });
   await expect(
@@ -147,7 +215,13 @@ for (const [name, a] of Object.entries({
   over: { ...attrs, meals: [{ ...attrs.meals[0], portions: 61 }] },
   rows: { ...attrs, meals: Array(11).fill(attrs.meals[0]) },
   pending: { ...attrs, pending: true },
-  unconfirmed: { ...attrs, observation_kind: "ack" },
+  unconfirmed: { ...attrs, schedule_valid: false },
+  restored: { ...attrs, snapshot_source: "restored" },
+  revision_string: { ...attrs, revision: "1" },
+  revision_zero: { ...attrs, revision: 0 },
+  receipt_invalid: { ...attrs, last_received_at: "bad" },
+  extra_fields: { ...attrs, meals: [{ ...attrs.meals[0], extra: true }] },
+  coerced_time: { ...attrs, meals: [{ ...attrs.meals[0], time: ["08:12"] }] },
 })) {
   test(`fail closed ${name}`, async ({ page }) => {
     await setup(page, a);
@@ -190,19 +264,17 @@ test("config editor emits selected sensor, title and icon", async ({
       "config-changed",
       (ev: any) => (result = ev.detail.config),
     );
-    e.shadowRoot
-      .querySelector("ha-form")
-      .dispatchEvent(
-        new CustomEvent("value-changed", {
-          detail: {
-            value: {
-              entity: "sensor.mock_other",
-              title: "Example",
-              icon: "mdi:calendar",
-            },
+    e.shadowRoot.querySelector("ha-form").dispatchEvent(
+      new CustomEvent("value-changed", {
+        detail: {
+          value: {
+            entity: "sensor.mock_other",
+            title: "Example",
+            icon: "mdi:calendar",
           },
-        }),
-      );
+        },
+      }),
+    );
     return result;
   });
   expect(result).toEqual({

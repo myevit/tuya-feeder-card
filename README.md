@@ -26,28 +26,34 @@ The visual card editor provides a sensor selector, title and icon. All examples 
 - Time, portion and enable controls edit only a local draft. Rows are 68px; stepper buttons and switches have 44px touch targets.
 - New rows default to **disabled**, every day, **23:59**, **one portion**. Limit: 10 meals and 1–60 integer portions, additionally constrained by the sensor's advertised limits. Each time must be HH:MM in 24-hour format.
 - Save opens a real keyboard-accessible modal listing the **entire replacement plan**, including disabled rows. Cancel, Escape, and Reset draft call no services. Untouched rows are preserved in the payload.
-- Only Confirm Save calls `tuya_feeder.set_schedule`, exactly once. While awaiting confirmation the whole draft container is inert and duplicate saves are blocked.
-- An empty service acknowledgement is **not success**. A matching confirmed incoming snapshot with a changed revision and receive timestamp clears the pending state. A reported error requires explicit reload. If the integration never reports confirmation or error, the card deliberately remains busy; do not infer success or retry a write blindly.
+- A draft reverted to the observed plan cannot Save and calls no service. Only Confirm Save calls `tuya_feeder.set_schedule`, exactly once. While awaiting confirmation the whole draft container is inert and duplicate saves are blocked.
+- An empty service acknowledgement is **not success**. A matching validated locally received snapshot with a strictly increased integer revision, a new receive timestamp, and `pending: false` clears busy. A transient error while backend `pending` remains true does not unlock the controls. Terminal errors require explicit reload. If HA sends no terminal state, a 20-second frontend watchdog preserves the draft, blocks retries until explicit reload, and reports uncertainty; it never infers success or retries automatically.
 - A changed revision during an unsaved draft blocks Save; explicitly Reload schedule to discard the draft. No silent overwrite.
 - Unknown/unavailable, invalid or unconfirmed snapshots, unsupported weekday subsets and missing write capability are read only. Legacy `days: Everyday` strings display read only when write support is absent. First release supports only all seven weekdays, not weekday-specific schedules.
 
 ## Integration contract
 
-Attributes: `meals`, `revision` (nonempty string or number), `last_received_at` (nonempty string), `observation_kind: confirmed`, `pending: false`, `error` empty/null, `supports_schedule_write: true`, `supported_days_mode: every_day`, integer `max_meals`, integer `max_portions`. `meals` is an array of objects containing `days`, `time`, integer `portions`, boolean `enabled`; `days` must contain each of `monday, tuesday, wednesday, thursday, friday, saturday, sunday` exactly once. No inferred meals or fabricated current snapshots.
+Use integration and card **v0.1.1 or newer together**. Attributes: `meals`, `revision` (positive safe integer), `last_received_at` (parseable nonempty ISO receive timestamp), `schedule_valid: true`, `snapshot_source: received`, `pending: false`, `error` empty/null, `supports_schedule_write: true`, `supported_days_mode: every_day`, integer `max_meals`, integer `max_portions`. `meals` is an array of objects containing `days`, `time`, integer `portions`, boolean `enabled`; `days` must contain each of `monday, tuesday, wednesday, thursday, friday, saturday, sunday` exactly once. No inferred meals or fabricated current snapshots. `observation_kind` remains the integration’s descriptive last-locally-reported warning and is not a machine confirmation flag. Restored snapshots are read only until a new local receipt. A receipt is not an active GET and unreported external-app edits may still be stale; the card always displays that warning.
 
 The only service payload is:
 
 ```json
-{"entity_id":"sensor.example_feeder_schedule","expected_revision":"revision-at-draft-start","meals":[{"days":["monday","tuesday","wednesday","thursday","friday","saturday","sunday"],"time":"23:59","portions":1,"enabled":false}]}
+{"entity_id":"sensor.example_feeder_schedule","expected_revision":7,"meals":[{"days":["monday","tuesday","wednesday","thursday","friday","saturday","sunday"],"time":"23:59","portions":1,"enabled":false}]}
 ```
 
 The sensor is the confirmation authority. This release intentionally ignores positive service response ACKs and waits for incoming attributes; service errors are displayed. The integration must perform its own revision, validation and transport safety checks. Hardware-dependent schedule support is not guaranteed by installing this frontend.
 
 ## Build and test
 
-Node 22+, `npm ci`, `npm run build`, `npx playwright install --with-deps chromium`, `npm test`. Optional `CHROMIUM_PATH` selects an already installed isolated Chromium. Tests exercise the **actual bundled card in Chromium DOM** with a mocked hass object, including confirmation, exact payload, zero-service drafts, cancellation, stale revisions, fail-closed validation, bounds, editor events and 640/320px screenshots. Browser artifacts are explicitly mock UI, not a live HA dashboard. CI validates HACS and builds/tests on the exact pushed commit. Version 0.1.0 uses a self-contained `dist/tuya-feeder-card.js` release asset (Lit bundled; no CDN runtime).
+Node 22+, `npm ci`, `npm run build`, `npx playwright install --with-deps chromium`, `npm test`. Optional `CHROMIUM_PATH` selects an already installed isolated Chromium. Tests exercise the **actual bundled card in Chromium DOM** with a mocked hass object, including confirmation, exact payload, zero-service drafts, cancellation, stale revisions, fail-closed validation, bounds, editor events and 640/320px screenshots. Browser artifacts are explicitly mock UI, not a live HA dashboard. CI validates HACS and builds/tests on the exact pushed commit. Version 0.1.1 uses a self-contained `dist/tuya-feeder-card.js` release asset (Lit bundled; no CDN runtime).
 
 Sources: [HACS plugin requirements](https://www.hacs.xyz/docs/publish/plugin/), [HA custom card API](https://developers.home-assistant.io/docs/frontend/custom-ui/custom-card/), [Lit components](https://lit.dev/docs/components/overview/).
+
+## Cross-package acceptance gate
+
+Both repositories' CI run `tuya-feeder/tests/test_card_contract.py` against the built card using `tests/integration_bridge.mjs`. The fixture is generated at test runtime from actual `hass.states` and a synthetic HA config entry/device, not hand-authored attributes. Real Chromium renders that state, captures one Confirm Save payload, and the real HA action handler validates it. An intercepted LocalTuya service supplies genuine synthetic inbound DP events; pending and matching-receipt transitions drive the same browser. Unknown, restored, corrupt, mixed-day, disconnected, timeout and edit-conflict states fail closed. No household fixture or live schedule is used.
+
+Locally, build the card, install the integration test requirements, then from the integration checkout run `TUYA_FEEDER_CARD_DIR=/path/to/tuya-feeder-card .venv/bin/pytest -q tests/test_card_contract.py` (optionally set `CHROMIUM_PATH`). CI records both checked-out commit IDs. No physical feeding or production deployment is asserted by this gate.
 
 ## Privacy / deployment
 

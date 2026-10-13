@@ -26,15 +26,28 @@ const valid = (m: unknown, max = 10, portions = 60): m is Meal[] =>
   m.every(
     (x) =>
       x &&
+      typeof x === "object" &&
+      Object.keys(x).sort().join(",") === "days,enabled,portions,time" &&
       Array.isArray(x.days) &&
       x.days.length === 7 &&
       new Set(x.days).size === 7 &&
       DAYS.every((d) => x.days.includes(d)) &&
+      typeof x.time === "string" &&
       /^([01]\d|2[0-3]):[0-5]\d$/.test(x.time) &&
       Number.isInteger(x.portions) &&
       x.portions >= 1 &&
       x.portions <= Math.min(60, portions) &&
       typeof x.enabled === "boolean",
+  );
+const samePlan = (a: Meal[], b: Meal[]) =>
+  a.length === b.length &&
+  a.every(
+    (m, i) =>
+      m.time === b[i].time &&
+      m.portions === b[i].portions &&
+      m.enabled === b[i].enabled &&
+      m.days.length === b[i].days.length &&
+      m.days.every((d) => b[i].days.includes(d)),
   );
 export class TuyaFeederCard extends LitElement {
   static properties = {
@@ -57,6 +70,11 @@ export class TuyaFeederCard extends LitElement {
   private base: unknown;
   private sent?: Meal[];
   private sentAt?: string;
+  private confirmationTimer?: ReturnType<typeof setTimeout>;
+  private clearConfirmationTimer() {
+    if (this.confirmationTimer) clearTimeout(this.confirmationTimer);
+    this.confirmationTimer = undefined;
+  }
   setConfig(c: Config) {
     if (!c.entity?.startsWith("sensor."))
       throw new Error("Select a schedule sensor");
@@ -71,15 +89,15 @@ export class TuyaFeederCard extends LitElement {
     this._hass = h;
     const a = this.attrs;
     if (this.busy) {
-      if (a.error) {
+      if (a.error && !a.pending) {
+        this.clearConfirmationTimer();
         this.busy = false;
         this.message = String(a.error);
         this.conflict = true;
       } else if (
         this.writable &&
-        a.observation_kind === "confirmed" &&
         !a.pending &&
-        a.revision !== this.base &&
+        a.revision > (this.base as number) &&
         a.last_received_at !== this.sentAt &&
         this.sent?.length === a.meals.length &&
         this.sent?.every(
@@ -92,6 +110,7 @@ export class TuyaFeederCard extends LitElement {
         this.busy = false;
         this.dirty = false;
         this.sent = undefined;
+        this.clearConfirmationTimer();
         this.load();
         this.message = "Schedule confirmed by incoming device report.";
       }
@@ -117,11 +136,13 @@ export class TuyaFeederCard extends LitElement {
       !["unknown", "unavailable"].includes(s.state) &&
       a.supports_schedule_write === true &&
       a.supported_days_mode === "every_day" &&
-      (typeof a.revision === "string" || typeof a.revision === "number") &&
-      a.revision !== "" &&
+      Number.isSafeInteger(a.revision) &&
+      a.revision > 0 &&
       typeof a.last_received_at === "string" &&
       !!a.last_received_at &&
-      a.observation_kind === "confirmed" &&
+      Number.isFinite(Date.parse(a.last_received_at)) &&
+      a.schedule_valid === true &&
+      a.snapshot_source === "received" &&
       a.pending === false &&
       !a.error &&
       Number.isInteger(a.max_meals) &&
@@ -179,6 +200,7 @@ export class TuyaFeederCard extends LitElement {
     return (
       !this.locked &&
       this.dirty &&
+      !samePlan(this.draft, this.attrs.meals) &&
       valid(this.draft, this.attrs.max_meals, this.attrs.max_portions)
     );
   }
@@ -200,6 +222,15 @@ export class TuyaFeederCard extends LitElement {
     this.sent = clone(this.draft);
     this.sentAt = this.attrs.last_received_at;
     this.busy = true;
+    this.clearConfirmationTimer();
+    this.confirmationTimer = setTimeout(() => {
+      if (!this.busy) return;
+      this.busy = false;
+      this.conflict = true;
+      this.message =
+        "Confirmation timed out. Draft retained; check incoming state and reload before trying again. No retry was sent.";
+      this.requestUpdate();
+    }, 20000);
     this.closeDialog();
     this.message =
       "Awaiting confirmed incoming schedule. An empty acknowledgement is not confirmation.";
@@ -209,12 +240,15 @@ export class TuyaFeederCard extends LitElement {
         expected_revision: this.base,
         meals: clone(this.sent),
       });
-      if (r?.error) {
+      if (r?.error && this.busy) {
+        this.clearConfirmationTimer();
         this.busy = false;
         this.conflict = true;
         this.message = String(r.error);
       }
     } catch (e) {
+      if (!this.busy) return;
+      this.clearConfirmationTimer();
       this.busy = false;
       this.conflict = true;
       this.message = `Save failed: ${String(e)}. Reload before retrying.`;
@@ -244,8 +278,12 @@ export class TuyaFeederCard extends LitElement {
         ${this.dirty ? html`<span class="badge">Draft</span>` : nothing}
       </header>
       <div class="status" role="status">
-        ${this.message || (!this.writable ? "Read only — confirmed writable snapshot required." : "Changes remain local until you confirm Save.")}
+        ${this.message || (!this.writable ? "Read only — validated locally received writable snapshot required." : "Changes remain local until you confirm Save.")}
       </div>
+      <small class="observation"
+        >Last locally received snapshot, not an active query. External-app
+        changes may be stale until a new local report.</small
+      >
       <section aria-label="Schedule draft" ?inert=${this.busy}>
         <fieldset ?disabled=${this.locked}>
           ${this.draft.map(

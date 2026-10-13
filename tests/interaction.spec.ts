@@ -23,9 +23,12 @@ test("busy container rejects pointer mutation and repeated confirmation; geometr
           state: "ready",
           attributes: {
             meals: [{ days, time: "12:34", portions: 1, enabled: false }],
-            revision: "synthetic-r1",
+            revision: 1,
             last_received_at: "2026-01-01T00:00:00Z",
-            observation_kind: "confirmed",
+            observation_kind:
+              "last locally reported snapshot; not an active schedule query",
+            schedule_valid: true,
+            snapshot_source: "received",
             pending: false,
             error: null,
             supports_schedule_write: true,
@@ -65,7 +68,7 @@ test("busy container rejects pointer mutation and repeated confirmation; geometr
           state: "ready",
           attributes: {
             ...c.hass.states["sensor.mock_feeder"].attributes,
-            revision: "synthetic-r2",
+            revision: 2,
             last_received_at: "2026-01-01T00:01:00Z",
             meals: [
               {
