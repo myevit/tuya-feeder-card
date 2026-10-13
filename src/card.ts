@@ -757,7 +757,8 @@ export class TuyaFeederCard extends LitElement {
     ha-card[data-active="true"] {
       background: var(--feeder-active-card-background, white);
       color: var(--feeder-active-text-color, black);
-      --muted: var(--feeder-active-muted-color, gray);
+      --primary-text-color: var(--feeder-active-text-color, black);
+      --secondary-text-color: var(--feeder-active-muted-color, gray);
       --feeder-header-icon-background: var(
         --feeder-active-icon-background,
         var(--accent-color, var(--primary-color))

@@ -1,6 +1,6 @@
 # Tuya Feeder Card
 
-A touchscreen Home Assistant card for the device-owned daily schedule exposed by [Tuya Feeder](https://github.com/myevit/tuya-feeder). Version **0.2.1** requires integration **0.2.0** for per-meal operations and optional manual feeding.
+A touchscreen Home Assistant card for the device-owned daily schedule exposed by [Tuya Feeder](https://github.com/myevit/tuya-feeder). Version **0.2.2** requires integration **0.2.0** for per-meal operations and optional manual feeding.
 
 The list has large meal times, independent enable switches and a compact **+** after the meals. Tapping a meal replaces the list **inside the card**. **Save** closes the editor and sends one meal operation. **Back**, Escape or Cancel discards the edit without sending anything. There is no popup, second confirmation for an ordinary Save, or global schedule draft.
 

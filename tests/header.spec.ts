@@ -112,25 +112,31 @@ test("computed defaults match generic standard action/entity reference, not an a
       },
       { active, a: attrs },
     );
-    const ref = await page
-      .locator(".reference")
-      .evaluate((e) => ({
-        background: getComputedStyle(e).backgroundColor,
-        text: getComputedStyle(e).color,
-        icon: getComputedStyle(e.querySelector(".icon")!).color,
-        iconBackground: getComputedStyle(e.querySelector(".icon")!)
-          .backgroundColor,
-      }));
-    const card = await page
-      .locator("ha-card")
-      .evaluate((e) => ({
-        background: getComputedStyle(e).backgroundColor,
-        text: getComputedStyle(e).color,
-        icon: getComputedStyle(e.querySelector("header > ha-icon")!).color,
-        iconBackground: getComputedStyle(e.querySelector("header > ha-icon")!)
-          .backgroundColor,
-      }));
+    const ref = await page.locator(".reference").evaluate((e) => ({
+      background: getComputedStyle(e).backgroundColor,
+      text: getComputedStyle(e).color,
+      icon: getComputedStyle(e.querySelector(".icon")!).color,
+      iconBackground: getComputedStyle(e.querySelector(".icon")!)
+        .backgroundColor,
+    }));
+    const card = await page.locator("ha-card").evaluate((e) => ({
+      background: getComputedStyle(e).backgroundColor,
+      text: getComputedStyle(e).color,
+      icon: getComputedStyle(e.querySelector("header > ha-icon")!).color,
+      iconBackground: getComputedStyle(e.querySelector("header > ha-icon")!)
+        .backgroundColor,
+    }));
     expect(card).toEqual(ref);
+    expect(
+      await page.locator("h2").evaluate((e) => getComputedStyle(e).color),
+    ).toBe(ref.text);
+    if (active)
+      expect(
+        await page
+          .locator(".detail")
+          .first()
+          .evaluate((e) => getComputedStyle(e).color),
+      ).toBe("rgb(128, 128, 128)");
   }
   await page.addStyleTag({
     content:
