@@ -4,6 +4,13 @@ A touchscreen Home Assistant card for the device-owned daily schedule exposed by
 
 The transparent wrapper contains independent standard-theme surfaces: one optional manual-feed container and a tile for each meal. A meal's **left icon circle** immediately toggles its enabled state. Its **time/title and subtitle** open a Home Assistant-native meal dialog. No separate right-hand switch, global Save or persistent status footer is shown.
 
+## Synthetic previews
+
+These screenshots render the built card with synthetic fixtures and mock transport; they are not a live installation or physical acceptance test. Native-dialog acceptance uses real installed HA components separately.
+
+![Wide synthetic schedule](docs/mock-wide.png)
+![Narrow synthetic schedule](docs/mock-mobile.png)
+
 ## HACS installation
 
 1. Install/configure the Tuya Feeder integration.

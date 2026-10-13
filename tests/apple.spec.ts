@@ -7,6 +7,10 @@ for (const width of [640, 320])
   }) => {
     await page.setViewportSize({ width, height: 760 });
     await setup(page);
+    await page.addStyleTag({
+      content:
+        "body{background:#29292b;--primary-text-color:white;--secondary-text-color:gray;--accent-color:#ff9f09;}",
+    });
     const geometry = await page
       .locator(".time")
       .first()
