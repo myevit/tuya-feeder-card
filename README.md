@@ -1,8 +1,8 @@
 # Tuya Feeder Card
 
-A touchscreen Home Assistant card for the device-owned daily schedule exposed by [Tuya Feeder](https://github.com/myevit/tuya-feeder). Version **0.2.0** requires integration **0.2.0** for per-meal operations and optional manual feeding.
+A touchscreen Home Assistant card for the device-owned daily schedule exposed by [Tuya Feeder](https://github.com/myevit/tuya-feeder). Version **0.2.1** requires integration **0.2.0** for per-meal operations and optional manual feeding.
 
-The list has large meal times, independent enable switches and a compact **+** in the header. Tapping a meal replaces the list **inside the card**. **Save** closes the editor and sends one meal operation. **Back**, Escape or Cancel discards the edit without sending anything. There is no popup, second confirmation for an ordinary Save, or global schedule draft.
+The list has large meal times, independent enable switches and a compact **+** after the meals. Tapping a meal replaces the list **inside the card**. **Save** closes the editor and sends one meal operation. **Back**, Escape or Cancel discards the edit without sending anything. There is no popup, second confirmation for an ordinary Save, or global schedule draft.
 
 ![Synthetic in-card editor](docs/mock-edit.png)
 
@@ -16,8 +16,8 @@ The list has large meal times, independent enable switches and a compact **+** i
 ```yaml
 type: custom:tuya-feeder-card
 entity: sensor.feeder_meal_plan
-title: Feeder schedule
-icon: mdi:calendar-clock
+title: Feeder
+icon: mdi:food-drumstick
 ```
 
 The integration owns discovery, schedule decoding, transport and confirmation. This card does not create feeding automations, duplicate a device schedule or import arbitrary raw datapoints.
@@ -41,18 +41,18 @@ The front of the card deliberately omits revision numbers, provenance and techni
 type: custom:tuya-feeder-card
 entity: sensor.feeder_meal_plan
 manual_feed: true
-feed_title: Feeder
-feed_icon: mdi:food-drumstick
+title: Feeder
+icon: mdi:food-drumstick
 portions_entity: input_number.feeder_portions  # optional existing persistent helper
 ```
 
-This adds one inline icon/title, minus/count/plus and **Feed** row. Only the separate controls are clickable. Changing portions never feeds. **Feed** opens an in-card confirmation of the exact dose; Cancel sends nothing and the second **Feed** sends one `tuya_feeder.feed` call. The backend validates 1–60 portions and rejects duplicate/uncertain requests. The UI says **Feed requested**, not that food physically dispensed.
+This merges manual controls into the single identity header: icon/title, minus/count/plus and **Feed**. No second schedule title or icon is added. `feed_title` and `feed_icon` remain deprecated fallback aliases; explicit `title` and `icon` take precedence. Only the separate controls are clickable. Changing portions never feeds. **Feed** opens an in-card confirmation of the exact dose; Cancel sends nothing and the second **Feed** sends one `tuya_feeder.feed` call. The backend validates 1–60 portions and rejects duplicate/uncertain requests. The UI says **Feed requested**, not that food physically dispensed.
 
 The row is off by default and its Feed action is disabled unless the integration advertises `supports_manual_feed`. With a helper, existing selection and bounds are preserved: increments/decrements use Home Assistant's authoritative `input_number.increment`/`decrement`, never overwrite helper configuration or create/reset a helper. Use an integer helper with step 1 and bounds within 1–60. Without a helper the count is local to this card session. Missing or out-of-range helper values are not silently clamped into a feed request.
 
 ## Appearance and visual editor
 
-The built-in layout needs **no card-mod**, imports or separate frontend dependency. It inherits HA primary/text/card/divider colors, radius, shadow and font. The header uses standard 18px medium text, a 25px icon in a 45px circle and a separate 44px Add control; the optional manual row is 68px tall with 15px text. The default large meal time is 32px. All independent touch controls are at least 44px.
+The built-in layout needs **no card-mod**, imports or separate frontend dependency. It inherits HA primary/text/card/divider colors, radius, shadow and font. The header uses standard 18px medium text, a 25px icon in a 45px circle and a separate 44px Add control after the meals; the single header is 68px tall, including optional manual controls. The default large meal time is 32px. All independent touch controls are at least 44px.
 
 The visual editor includes the following optional `appearance` fields. Values are single CSS property values, not stylesheets, HTML or URLs. Invalid/injection-like values are rejected.
 
@@ -79,9 +79,13 @@ appearance:
 | `card_background` / `--feeder-card-background` | HA card background |
 | `control_size` / `--feeder-control-size` | 44px minimum |
 
-Additional CSS-only hooks: `--feeder-header-icon-background` (accent) and `--feeder-header-icon-color` (HA text-primary color). Avoid extreme font/control sizes on narrow dashboards; 44px remains the minimum hit target.
+The card becomes active only when a valid confirmed integration plan has at least one enabled meal. Disabled/empty, invalid, unknown and unavailable plans are inactive. Valid restored plans may be active but are not treated as fresh receipts; the historical-write acknowledgement remains unchanged. Editor toggles do not change activity until incoming confirmed attributes change.
 
-Stable shadow parts: `card`, `header`, `title`, `meal`, `row`, `meal-time`, `meal-button`, `switch`, `stepper`, `control`, `save`, `add`, `manual-feed`, `status`. Theme/custom CSS can target, for example, `tuya-feeder-card::part(title)` or `tuya-feeder-card::part(save)` without relying on internal class names.
+Inactive styling uses the HA card background/text, a transparent icon background and the standard custom-card default gray icon (`#9da0a2`), **not accent**. Active styling follows the standard state-on tile: white card, black text, gray secondary text, accent-colored icon circle and white icon. The entire header is not accent-colored. Feed remains an independent accent action.
+
+Additional CSS-only hooks: `--feeder-header-icon-background` (transparent), `--feeder-header-icon-color` (default gray), `--feeder-active-card-background` (white), `--feeder-active-text-color` (black), `--feeder-active-muted-color` (gray), `--feeder-active-icon-background` (HA accent/primary) and `--feeder-active-icon-color` (white). Set the active hooks on the host through theme CSS/card-mod; no backend or card-mod dependency is introduced. Avoid extreme font/control sizes on narrow dashboards; 44px remains the minimum hit target.
+
+Stable shadow parts: `card` (with `data-active="true|false"`), `header`, `header-icon`, `title`, `meal`, `row`, `meal-time`, `meal-button`, `switch`, `stepper`, `control`, `save`, `add`, `manual-feed`, `status`. Theme/custom CSS can target, for example, `tuya-feeder-card::part(title)` or `tuya-feeder-card::part(save)` without relying on internal class names.
 
 ### Optional card-mod
 

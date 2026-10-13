@@ -126,6 +126,11 @@ for (const width of [640, 320])
   test(`combined manual row does not overflow ${width}`, async ({ page }) => {
     await page.setViewportSize({ width, height: 760 });
     await manual(page, true);
+    await page.evaluate(() => {
+      const c: any = document.querySelector("tuya-feeder-card");
+      c.setConfig({ ...c.config, title: "Pet", icon: "mdi:food-drumstick" });
+    });
+    await expect(page.locator("h2")).toHaveText("Pet");
     expect(
       await page.evaluate(
         () => document.documentElement.scrollWidth > innerWidth,

@@ -231,6 +231,19 @@ export class TuyaFeederCard extends LitElement {
       valid(a.meals, a.max_meals, a.max_portions)
     );
   }
+  // Presentation only: confirmed integration attributes, never the editor draft.
+  private get scheduleActive() {
+    const state = this._hass?.states[this.config?.entity];
+    const a = this.attrs;
+    return (
+      !!state &&
+      !["unknown", "unavailable"].includes(state.state) &&
+      a.schedule_valid === true &&
+      ["received", "restored"].includes(a.snapshot_source) &&
+      valid(a.meals, a.max_meals, a.max_portions) &&
+      a.meals.some((m: Meal) => m.enabled === true)
+    );
+  }
   private get locked() {
     return !this.writable || this.conflict || this.busy || this.feedBusy;
   }
@@ -508,7 +521,7 @@ export class TuyaFeederCard extends LitElement {
     return document.createElement("tuya-feeder-card-editor");
   }
   static getStubConfig() {
-    return { entity: "", title: "Feeder schedule", icon: "mdi:calendar-clock" };
+    return { entity: "", title: "Feeder", icon: "mdi:food-drumstick" };
   }
   getCardSize() {
     return 2 + this.baseline.length;
@@ -535,6 +548,7 @@ export class TuyaFeederCard extends LitElement {
       m = i === null ? undefined : this.draft[i];
     return html`<ha-card
       part="card"
+      data-active=${String(this.scheduleActive)}
       @keydown=${(e: KeyboardEvent) => {
         if (e.key === "Escape" && this.view !== "list") {
           e.preventDefault();
@@ -544,13 +558,18 @@ export class TuyaFeederCard extends LitElement {
     >
       ${
         this.view === "list"
-          ? html` ${this.config.manual_feed ? html`<div part="manual-feed row" class="manual"><ha-icon .icon=${this.config.feed_icon ?? "mdi:food-drumstick"}></ha-icon><span class="feed-name">${this.config.feed_title ?? "Feeder"}</span><button part="control" aria-label="Decrease feeding portions" ?disabled=${!this.feedBounds || !Number.isInteger(this.selectedPortions) || this.selectedPortions <= this.feedBounds.min || this.helperBusy || this.feedBusy || this.busy} @click=${() => this.selectFeed(-1)}>−</button><output aria-label="Feeding portions">${Number.isInteger(this.selectedPortions) && this.feedBounds && this.selectedPortions >= this.feedBounds.min && this.selectedPortions <= this.feedBounds.max ? this.selectedPortions : "—"}</output><button part="control" aria-label="Increase feeding portions" ?disabled=${!this.feedBounds || !Number.isInteger(this.selectedPortions) || this.selectedPortions >= this.feedBounds.max || this.helperBusy || this.feedBusy || this.busy} @click=${() => this.selectFeed(1)}>+</button><button class="accent feed" ?disabled=${!this.feedReady} @click=${this.confirmFeed}>Feed</button></div>` : nothing}
-              <header part="header">
+          ? html`<header
+                part=${this.config.manual_feed ? "header manual-feed row" : "header"}
+                class=${this.config.manual_feed ? "manual" : ""}
+              >
                 <ha-icon
-                  .icon=${this.config.icon ?? "mdi:calendar-clock"}
+                  part="header-icon"
+                  .icon=${this.config.icon ?? this.config.feed_icon ?? "mdi:food-drumstick"}
                 ></ha-icon>
-                <h2 part="title">${this.config.title ?? "Feeder schedule"}</h2>
-                ${this.writable || this.busy || this.failed || this.conflict ? html`<button part="add control" class="add" aria-label="Add meal" title="Add meal" ?disabled=${this.locked || this.failed || this.baseline.length >= Math.min(10, this.attrs.max_meals)} @click=${this.add}><ha-icon icon="mdi:plus"></ha-icon></button>` : nothing}
+                <h2 part="title">
+                  ${this.config.title ?? this.config.feed_title ?? "Feeder"}
+                </h2>
+                ${this.config.manual_feed ? html`<button part="control" aria-label="Decrease feeding portions" ?disabled=${!this.feedBounds || !Number.isInteger(this.selectedPortions) || this.selectedPortions <= this.feedBounds.min || this.helperBusy || this.feedBusy || this.busy} @click=${() => this.selectFeed(-1)}>−</button><output aria-label="Feeding portions">${Number.isInteger(this.selectedPortions) && this.feedBounds && this.selectedPortions >= this.feedBounds.min && this.selectedPortions <= this.feedBounds.max ? this.selectedPortions : "—"}</output><button part="control" aria-label="Increase feeding portions" ?disabled=${!this.feedBounds || !Number.isInteger(this.selectedPortions) || this.selectedPortions >= this.feedBounds.max || this.helperBusy || this.feedBusy || this.busy} @click=${() => this.selectFeed(1)}>+</button><button class="accent feed" ?disabled=${!this.feedReady} @click=${this.confirmFeed}>Feed</button>` : nothing}
               </header>
               <section
                 aria-label="Meal schedule"
@@ -592,6 +611,7 @@ export class TuyaFeederCard extends LitElement {
                       )
                     : html`<div class="unavailable">Schedule unavailable</div>`
                 }
+                ${this.writable || this.busy || this.failed || this.conflict ? html`<button part="add control" class="add" aria-label="Add meal" title="Add meal" ?disabled=${this.locked || this.failed || this.baseline.length >= Math.min(10, this.attrs.max_meals)} @click=${this.add}><ha-icon icon="mdi:plus"></ha-icon></button>` : nothing}
                 ${!this.writable && !this.busy && !this.failed && !this.conflict ? html`<button @click=${this.reset}>Retry</button>` : nothing}
               </section>`
           : this.view === "feed"
@@ -721,7 +741,7 @@ export class TuyaFeederCard extends LitElement {
     }
     ha-card {
       display: block;
-      padding: 14px;
+      padding: 10px;
       background: var(
         --feeder-card-background,
         var(--ha-card-background, var(--card-background-color, #fff))
@@ -734,11 +754,25 @@ export class TuyaFeederCard extends LitElement {
         var(--ha-card-border-color, var(--divider-color, #ddd));
       box-shadow: var(--ha-card-box-shadow, none);
     }
+    ha-card[data-active="true"] {
+      background: var(--feeder-active-card-background, white);
+      color: var(--feeder-active-text-color, black);
+      --muted: var(--feeder-active-muted-color, gray);
+      --feeder-header-icon-background: var(
+        --feeder-active-icon-background,
+        var(--accent-color, var(--primary-color))
+      );
+      --feeder-header-icon-color: var(--feeder-active-icon-color, white);
+    }
+    section > .add {
+      display: block;
+      margin: 8px 0 0 auto;
+    }
     header {
       display: flex;
       align-items: center;
       gap: 14px;
-      min-height: 48px;
+      min-height: 68px;
       margin-bottom: 12px;
     }
     h2 {
@@ -761,8 +795,8 @@ export class TuyaFeederCard extends LitElement {
       height: 45px;
       padding: 10px;
       border-radius: 50%;
-      background: var(--feeder-header-icon-background, var(--accent));
-      color: var(--feeder-header-icon-color, var(--text-primary-color, #fff));
+      background: var(--feeder-header-icon-background, transparent);
+      color: var(--feeder-header-icon-color, #9da0a2);
     }
     .meal {
       display: flex;
@@ -965,24 +999,18 @@ export class TuyaFeederCard extends LitElement {
     .manual {
       display: grid;
       grid-template-columns:
-        18px minmax(28px, 1fr) var(--control) 32px var(--control)
+        45px minmax(33px, 1fr) var(--control) 32px var(--control)
         minmax(64px, 1fr);
-      column-gap: 4px;
+      column-gap: 2px;
       align-items: center;
       min-height: 68px;
-      margin: -4px -4px 12px;
+      margin: 0 -4px 12px;
       padding: 10px 0;
     }
-    .manual ha-icon {
-      --mdc-icon-size: 18px;
-      width: 18px;
-      height: 18px;
-    }
-    .feed-name {
+    .manual h2 {
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
-      font-size: 15px;
     }
     .manual output {
       font-size: 32px;

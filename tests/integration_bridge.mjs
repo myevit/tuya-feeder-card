@@ -46,6 +46,11 @@ for await (const line of createInterface({ input: process.stdin })) {
         const c = document.querySelector("tuya-feeder-card");
         c.hass = { ...c.hass, states: { [state.entity_id]: state } };
       }, cmd.state);
+    } else if (cmd.action === "active") {
+      await expect(page.locator("ha-card")).toHaveAttribute(
+        "data-active",
+        String(cmd.expected),
+      );
     } else if (cmd.action === "service_result") {
       await page.evaluate(({ result, error }) => {
         if (error) window.rejectService(new Error(error));

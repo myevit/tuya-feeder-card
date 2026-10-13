@@ -33,6 +33,25 @@ def state(hass, sensor):
     s=hass.states.get(sensor.entity_id)
     return {'entity_id':s.entity_id, 'state':s.state, 'attributes':dict(s.attributes)}
 
+async def test_actual_confirmed_activity_is_presentation_only(hass, feeder, bridge):
+    sensor, entry, transport, _ = feeder
+    await bridge('init', state=state(hass, sensor))
+    await bridge('active', expected=False)
+    from test_snapshot_import import import_saved
+    await import_saved(hass, sensor, entry)
+    restored = state(hass, sensor)
+    await bridge('state', state=restored)
+    await bridge('active', expected=any(m['enabled'] for m in restored['attributes']['meals']))
+    for meals in [[], [{**BASE[0], 'enabled': False}], BASE,
+                  [*BASE, {**BASE[0], 'time': '22:48', 'enabled': True}]]:
+        await report(hass, meals)
+        await bridge('state', state=state(hass, sensor))
+        await bridge('active', expected=any(m['enabled'] for m in meals))
+    await report(hass, raw='AA==')
+    await bridge('state', state=state(hass, sensor))
+    await bridge('active', expected=False)
+    transport.assert_not_called()
+
 @pytest.mark.parametrize('operation', ['update_meal','delete_meal','add_meal'])
 async def test_actual_per_meal_schema_merge_and_handler_gate(hass, feeder, bridge, operation):
     sensor, _, transport, _ = feeder
