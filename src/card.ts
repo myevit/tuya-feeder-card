@@ -18,6 +18,7 @@ type Meal = {
 type Appearance = Partial<
   Record<
     | "accent_color"
+    | "icon_color"
     | "border_radius"
     | "font_family"
     | "header_font_size"
@@ -33,6 +34,8 @@ type Config = {
   entity: string;
   title?: string;
   icon?: string;
+  meal_icon_mode?: "time_of_day" | "fixed";
+  meal_icon?: string;
   manual_feed?: boolean;
   feed_title?: string;
   feed_icon?: string;
@@ -77,6 +80,7 @@ const samePlan = (a: Meal[], b: Meal[]) =>
   );
 const APPEARANCE = [
   "accent_color",
+  "icon_color",
   "border_radius",
   "font_family",
   "header_font_size",
@@ -90,6 +94,7 @@ function safeAppearance(a: Appearance = {}): Appearance {
   const out: Appearance = {};
   const props = {
     accent_color: "color",
+    icon_color: "color",
     border_radius: "border-radius",
     font_family: "font-family",
     header_font_size: "font-size",
@@ -157,6 +162,11 @@ export class TuyaFeederCard extends LitElement {
       throw new Error("Select a portions helper");
     if (this.busy || this.feedBusy)
       throw new Error("Wait for completion before changing config");
+    if (
+      c.meal_icon_mode &&
+      !["time_of_day", "fixed"].includes(c.meal_icon_mode)
+    )
+      throw new Error("Select time_of_day or fixed meal icons");
     this.config = { ...c, appearance: safeAppearance(c.appearance) };
     for (const key of APPEARANCE) {
       this.style.removeProperty(`--feeder-${key.replaceAll("_", "-")}`);
@@ -622,6 +632,19 @@ export class TuyaFeederCard extends LitElement {
   getGridOptions() {
     return { columns: 12, min_columns: 6 };
   }
+  private mealIcon(time: string) {
+    if (this.config.meal_icon_mode === "fixed")
+      return this.config.meal_icon ?? this.config.icon ?? "mdi:food-drumstick";
+    // Schedule times are already local HH:MM; never reinterpret as UTC.
+    const hour = Number(time.slice(0, 2));
+    return hour >= 5 && hour < 11
+      ? "mdi:weather-sunset-up"
+      : hour >= 11 && hour < 16
+        ? "mdi:white-balance-sunny"
+        : hour >= 16 && hour < 21
+          ? "mdi:weather-sunset-down"
+          : "mdi:weather-night";
+  }
   private lastFeedLabel() {
     const value = this.attrs.last_feed_at;
     if (typeof value !== "string" || !/(Z|[+-]\d{2}:\d{2})$/.test(value))
@@ -683,10 +706,19 @@ export class TuyaFeederCard extends LitElement {
           data-active=${String(this.scheduleActive)}
           class=${this.config.manual_feed ? "manual" : ""}
         >
-          <ha-icon
-            part="header-icon"
-            .icon=${this.config.icon ?? this.config.feed_icon ?? "mdi:food-drumstick"}
-          ></ha-icon>
+          <button
+            class="identity-add"
+            part="add control"
+            aria-label="Add meal"
+            title="Add meal"
+            ?disabled=${this.locked || this.failed || this.baseline.length >= Math.min(10, this.attrs.max_meals)}
+            @click=${this.add}
+          >
+            <ha-icon
+              part="header-icon"
+              .icon=${this.config.icon ?? this.config.feed_icon ?? "mdi:food-drumstick"}
+            ></ha-icon>
+          </button>
           <div class="identity">
             <h2 part="title">
               ${this.config.title ?? this.config.feed_title ?? "Feeder"}
@@ -714,6 +746,7 @@ export class TuyaFeederCard extends LitElement {
                         part="enabled control"
                         role="switch"
                         aria-label=${`Enabled ${n + 1}`}
+                        aria-description=${`Meal ${n + 1} at ${meal.time}; tap to ${meal.enabled ? "disable" : "enable"}`}
                         aria-checked=${String(meal.enabled)}
                         aria-busy=${String(this.busy && this.toggling === n)}
                         ?disabled=${this.locked || this.failed}
@@ -724,9 +757,7 @@ export class TuyaFeederCard extends LitElement {
                           } as unknown as Event);
                         }}
                       >
-                        <ha-icon
-                          .icon=${this.config.icon ?? "mdi:food-drumstick"}
-                        ></ha-icon>
+                        <ha-icon .icon=${this.mealIcon(meal.time)}></ha-icon>
                       </button>
                       <button
                         part="meal-button"
@@ -749,7 +780,6 @@ export class TuyaFeederCard extends LitElement {
                 )
               : html`<div class="unavailable">Schedule unavailable</div>`
           }
-          ${this.writable || this.busy || this.failed || this.conflict ? html`<button part="add control" class="add" aria-label="Add meal" title="Add meal" ?disabled=${this.locked || this.failed || this.baseline.length >= Math.min(10, this.attrs.max_meals)} @click=${this.add}><ha-icon icon="mdi:plus"></ha-icon></button>` : nothing}
           ${!this.writable && !this.busy && !this.failed && !this.conflict ? html`<button @click=${this.reset}>Retry</button>` : nothing}
         </section>`}
       ${this.conflict ? html`<button @click=${this.reset}>Reload</button>` : this.failed ? html`<div class="actions"><button @click=${this.reset}>Cancel</button><button ?disabled=${!this.writable} @click=${this.retry}>Try again</button></div>` : nothing}
@@ -768,6 +798,10 @@ export class TuyaFeederCard extends LitElement {
       --accent: var(
         --feeder-accent-color,
         var(--accent-color, var(--primary-color, #03a9f4))
+      );
+      --icon-palette: var(
+        --feeder-icon-color,
+        var(--color-teal, var(--accent))
       );
       --control: max(44px, var(--feeder-control-size, 44px));
     }
@@ -796,7 +830,7 @@ export class TuyaFeederCard extends LitElement {
       --secondary-text-color: var(--feeder-active-muted-color, gray);
       --feeder-header-icon-background: var(
         --feeder-active-icon-background,
-        var(--accent-color, var(--primary-color))
+        var(--icon-palette)
       );
       --feeder-header-icon-color: var(--feeder-active-icon-color, white);
     }
@@ -825,7 +859,7 @@ export class TuyaFeederCard extends LitElement {
       flex-shrink: 0;
       color: var(--secondary-text-color, #777);
     }
-    header > ha-icon {
+    header .identity-add ha-icon {
       --mdc-icon-size: 25px;
       width: 45px;
       height: 45px;
@@ -834,14 +868,14 @@ export class TuyaFeederCard extends LitElement {
       background: var(--feeder-header-icon-background, transparent);
       color: var(--feeder-header-icon-color, #9da0a2);
     }
-    header:not(.edit-header):has(> ha-icon) {
+    header:not(.edit-header):has(> .identity-add) {
       display: grid;
       grid-template-columns: 64px minmax(0, 1fr);
       gap: 0;
       margin-left: -10px;
       margin-right: -10px;
     }
-    header > ha-icon {
+    header .identity-add ha-icon {
       margin-left: 11.5px;
     }
     .meal {
@@ -1004,7 +1038,7 @@ export class TuyaFeederCard extends LitElement {
       gap: 8px;
     }
     .stepper button,
-    .manual > button:not(.feed) {
+    .manual > button:not(.feed):not(.identity-add) {
       width: var(--control);
       height: var(--control);
       padding: 0;
@@ -1048,7 +1082,7 @@ export class TuyaFeederCard extends LitElement {
     .edit-header [data-back] ha-icon {
       color: inherit;
     }
-    header.manual:not(.edit-header):has(> ha-icon) {
+    header.manual:not(.edit-header):has(> .identity-add) {
       display: grid;
       grid-template-columns:
         64px minmax(33px, 1fr) var(--control) 32px var(--control)
@@ -1099,8 +1133,8 @@ export class TuyaFeederCard extends LitElement {
       border: 0;
       box-shadow: none;
     }
-    header:not(.edit-header):has(> ha-icon),
-    header.manual:not(.edit-header):has(> ha-icon) {
+    header:not(.edit-header):has(> .identity-add),
+    header.manual:not(.edit-header):has(> .identity-add) {
       margin: 0 0 8px;
       min-height: 68px;
       border-radius: var(
@@ -1115,13 +1149,21 @@ export class TuyaFeederCard extends LitElement {
         0 2px 4px rgba(0, 0, 0, 0.1),
         0 6px 10px rgba(0, 0, 0, 0.08);
     }
-    header[data-active="true"]:not(.edit-header):has(> ha-icon) {
+    header[data-active="true"]:not(.edit-header):has(> .identity-add) {
       background: var(--feeder-active-card-background, white);
     }
-    header > ha-icon {
+    header .identity-add ha-icon {
       margin-left: 11.5px;
-      background: var(--feeder-header-icon-background, rgba(0, 0, 0, 0.2));
-      color: var(--feeder-header-icon-color, white);
+      background: var(--feeder-header-icon-background, transparent);
+      color: var(--feeder-header-icon-color, var(--icon-palette));
+    }
+    .identity-add {
+      width: 64px;
+      min-height: 68px;
+      padding: 0;
+      display: flex;
+      align-items: center;
+      border-radius: inherit;
     }
     .identity {
       min-width: 0;
@@ -1132,7 +1174,7 @@ export class TuyaFeederCard extends LitElement {
       color: var(--secondary-text-color, #777);
       white-space: normal;
     }
-    header.manual:not(.edit-header):has(> ha-icon) {
+    header.manual:not(.edit-header):has(> .identity-add) {
       grid-template-columns:
         64px minmax(80px, 1fr) var(--control) 32px var(--control)
         minmax(64px, 1fr);
@@ -1173,11 +1215,11 @@ export class TuyaFeederCard extends LitElement {
       padding: 10px;
       --mdc-icon-size: 25px;
       border-radius: 24px;
-      color: white;
-      background: rgba(0, 0, 0, 0.2);
+      color: var(--icon-palette);
+      background: transparent;
     }
     .meal[data-enabled="true"] .meal-toggle ha-icon {
-      background: var(--feeder-active-icon-background, var(--accent));
+      background: var(--feeder-active-icon-background, var(--icon-palette));
       color: var(--feeder-active-icon-color, white);
     }
     .open {
@@ -1208,7 +1250,7 @@ export class TuyaFeederCard extends LitElement {
       font-size: 15px;
     }
     @container (max-width:360px) {
-      header.manual:not(.edit-header):has(> ha-icon) {
+      header.manual:not(.edit-header):has(> .identity-add) {
         grid-template-columns:
           64px minmax(0, 1fr) var(--control) 28px var(--control)
           55px;
@@ -1257,13 +1299,16 @@ class TuyaFeederCardEditor extends LitElement {
     const labels: Record<string, string> = {
       entity: "Schedule sensor",
       title: "Title",
-      icon: "Icon",
+      icon: "Identity icon (Add meal)",
+      meal_icon_mode: "Meal icons",
+      meal_icon: "Fixed meal icon",
       manual_feed: "Show manual feeding",
       feed_title: "Feeding title",
       feed_icon: "Feeding icon",
       portions_entity: "Portions helper (optional)",
       appearance: "Appearance",
       accent_color: "Accent color",
+      icon_color: "Icon color",
       border_radius: "Corner radius",
       font_family: "Font family",
       header_font_size: "Header size",
@@ -1285,6 +1330,18 @@ class TuyaFeederCardEditor extends LitElement {
         },
         { name: "title", selector: { text: {} } },
         { name: "icon", selector: { icon: {} } },
+        {
+          name: "meal_icon_mode",
+          selector: {
+            select: {
+              options: [
+                { value: "time_of_day", label: "Time of day" },
+                { value: "fixed", label: "Fixed icon" },
+              ],
+            },
+          },
+        },
+        { name: "meal_icon", selector: { icon: {} } },
         { name: "manual_feed", selector: { boolean: {} } },
         { name: "feed_title", selector: { text: {} } },
         { name: "feed_icon", selector: { icon: {} } },

@@ -91,6 +91,6 @@ test("backend not yet reloaded cannot expose falsely working schedule controls",
   await expect(page.locator("ha-card")).toContainText("Schedule unavailable");
   await expect(
     page.getByRole("button", { name: "Add meal", exact: true }),
-  ).toHaveCount(0);
+  ).toBeDisabled();
   expect(await calls(page)).toEqual([]);
 });

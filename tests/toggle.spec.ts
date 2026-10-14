@@ -295,7 +295,9 @@ for (const width of [320, 640])
     });
     const geometry = await page.locator("ha-card").evaluate((e) => {
       const b = e.getBoundingClientRect(),
-        icon = e.querySelector("header>ha-icon")!.getBoundingClientRect(),
+        icon = e
+          .querySelector("header .identity-add ha-icon")!
+          .getBoundingClientRect(),
         title = e.querySelector("h2")!.getBoundingClientRect(),
         time = e.querySelector(".time")!.getBoundingClientRect(),
         detail = e.querySelector(".detail")!.getBoundingClientRect();

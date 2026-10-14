@@ -52,7 +52,22 @@ The subtitle uses the integration's persistent `last_feed_at`: `Last fed 12:00`,
 
 This is the most recent **observed local feeding activity** (audited DP4 inactive→feeding event), irrespective of whether initiated by the device schedule, physical button, app or HA. It is not inferred from DP1 schedule receipt, helper edits, script history, command ACK, DP14's cached portions or HA attribute timestamps. It does not independently prove food delivery. Feeding while HA/local transport is offline cannot be observed; an initial cached snapshot is not dated as a new feed. No historical date is invented when upgrading.
 
-## Manual feeding
+### Meal icons and Add meal
+
+Tap the identity icon in the header to open **Add meal** in Home Assistant’s native form. It never feeds; opening or cancelling sends no service call. There is no separate Add +. The portions −/+ and separate confirmed Feed action are unchanged. The identity remains visible but disabled if the plan is unavailable, an operation is pending, or ten meals already exist. A new meal stays disabled until explicitly enabled.
+
+Meal icons default to scheduled local time of day: morning 05:00–10:59 (`mdi:weather-sunset-up`), daytime 11:00–15:59 (`mdi:white-balance-sunny`), evening 16:00–20:59 (`mdi:weather-sunset-down`), and night otherwise (`mdi:weather-night`). These are fixed local HH:MM boundaries, not timezone conversions. The meal icon still toggles only that meal; its title opens Edit. To use a fixed glyph instead:
+
+```yaml
+meal_icon_mode: fixed
+meal_icon: mdi:clock-outline
+```
+
+`meal_icon_mode` and `meal_icon` are available in the visual editor. `icon` controls only the header identity in time-of-day mode. In fixed mode, an omitted `meal_icon` falls back to `icon`, then `mdi:food-drumstick`.
+
+`appearance.icon_color` / `--feeder-icon-color` sets a shared icon palette independently of `accent_color` (Feed). It falls back to the theme’s `--color-teal`, then the existing accent. Active icons use that palette for their circle with a white glyph; inactive icons use the palette for the glyph with a transparent circle. Existing explicit header/active icon overrides retain precedence.
+
+### Manual feeding
 
 The manual surface has one icon/title/subtitle identity followed by minus/count/plus and **Feed**. `feed_title`/`feed_icon` remain deprecated fallback aliases; explicit title/icon win. Only controls actuate; the outer wrapper is inert.
 

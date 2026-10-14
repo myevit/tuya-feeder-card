@@ -5,8 +5,16 @@ import {
   mdiFoodDrumstick,
   mdiPlus,
   mdiChevronLeft,
+  mdiWeatherSunsetUp,
+  mdiWhiteBalanceSunny,
+  mdiWeatherSunsetDown,
+  mdiWeatherNight,
 } from "@mdi/js";
 const icons = {
+  "mdi:weather-sunset-up": mdiWeatherSunsetUp,
+  "mdi:white-balance-sunny": mdiWhiteBalanceSunny,
+  "mdi:weather-sunset-down": mdiWeatherSunsetDown,
+  "mdi:weather-night": mdiWeatherNight,
   "mdi:calendar-clock": mdiCalendarClock,
   "mdi:food-drumstick": mdiFoodDrumstick,
   "mdi:plus": mdiPlus,

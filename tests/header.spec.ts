@@ -117,7 +117,7 @@ test("independent standard surfaces use saved meal activity and transparent wrap
   expect(actual.rows[1].surface.bg).toBe("rgba(0, 0, 0, 0.3)");
   expect(actual.rows[1].title.color).toBe("rgb(255, 255, 255)");
   expect(actual.rows[1].detail.color).toBe("rgba(255, 255, 255, 0.5)");
-  expect(actual.rows[1].icon.bg).toBe("rgba(0, 0, 0, 0.2)");
+  expect(actual.rows[1].icon.bg).toBe("rgba(0, 0, 0, 0)");
 });
 
 test("single identity header merges manual controls and preserves legacy fallback", async ({
@@ -135,9 +135,11 @@ test("single identity header merges manual controls and preserves legacy fallbac
   });
   await expect(page.locator("header")).toHaveCount(1);
   await expect(page.locator("h2")).toHaveText("Example");
-  await expect(page.locator("header > ha-icon")).toHaveCount(1);
+  await expect(page.locator("header .identity-add ha-icon")).toHaveCount(1);
   expect(
-    await page.locator("header > ha-icon").evaluate((e: any) => e._icon),
+    await page
+      .locator("header .identity-add ha-icon")
+      .evaluate((e: any) => e._icon),
   ).toBe("mdi:food-drumstick");
   await expect(
     page.locator("header").getByLabel("Feeding portions", { exact: true }),
