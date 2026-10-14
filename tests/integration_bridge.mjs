@@ -68,7 +68,8 @@ for await (const line of createInterface({ input: process.stdin })) {
       await expect(
         page.getByRole("checkbox", { name: "Use saved plan?" }),
       ).toHaveCount(0);
-      await expect(page.locator(".status")).toHaveText("Saving…");
+      await expect(page.locator(".status")).toHaveCount(0);
+      await expect(page.locator("ha-card")).toHaveAttribute("aria-busy", "true");
     } else if (cmd.action === "toggle_error") {
       await expect(page.locator(".status")).toContainText(
         "Couldn’t change meal",

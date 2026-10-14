@@ -244,7 +244,7 @@ export class TuyaFeederCard extends LitElement {
         this.toggling = null;
         this.editing = null;
         this.load();
-        this.message = "Saved";
+        this.message = "";
       }
     } else if (this.editing !== null || this.failed) {
       if (
@@ -513,7 +513,7 @@ export class TuyaFeederCard extends LitElement {
     this.busy = true;
     this.failed = false;
     this.view = "list";
-    this.message = "Saving…";
+    this.message = "";
     this.clearTimer();
     this.timer = setTimeout(() => {
       if (this.busy && this.attempt === attempt)
@@ -644,14 +644,14 @@ export class TuyaFeederCard extends LitElement {
       return;
     this.feedBusy = true;
     this.view = "list";
-    this.message = "Feeding…";
+    this.message = "";
     try {
       const r = await this.hass.callService("tuya_feeder", "feed", {
         entity_id: this.config.entity,
         portions: this.feedDose,
       });
       if (r?.error) throw new Error(String(r.error));
-      this.message = "Feed requested";
+      this.message = "";
     } catch (e) {
       console.error("Tuya feeder manual feed failed", e);
       this.message = "Couldn’t feed. Try again.";
@@ -733,6 +733,7 @@ export class TuyaFeederCard extends LitElement {
     if (!this.config) return nothing;
     return html`<ha-card
       part="card outer"
+      aria-busy=${String(this.busy || this.feedBusy || this.helperBusy)}
       data-active=${String(this.scheduleActive)}
       @keydown=${(e: KeyboardEvent) => {
         if (e.key === "Escape" && this.view !== "list") {
@@ -767,7 +768,7 @@ export class TuyaFeederCard extends LitElement {
           </div>
           ${this.config.manual_feed ? html`<button part="control" aria-label="Decrease feeding portions" ?disabled=${!this.feedBounds || !Number.isInteger(this.selectedPortions) || this.selectedPortions <= this.feedBounds.min || this.helperBusy || this.feedBusy || this.busy} @click=${() => this.selectFeed(-1)}>−</button><output aria-label="Feeding portions">${Number.isInteger(this.selectedPortions) && this.feedBounds && this.selectedPortions >= this.feedBounds.min && this.selectedPortions <= this.feedBounds.max ? this.selectedPortions : "—"}</output><button part="control" aria-label="Increase feeding portions" ?disabled=${!this.feedBounds || !Number.isInteger(this.selectedPortions) || this.selectedPortions >= this.feedBounds.max || this.helperBusy || this.feedBusy || this.busy} @click=${() => this.selectFeed(1)}>+</button><button class="accent feed" ?disabled=${!this.feedReady} @click=${this.confirmFeed}>Feed</button>` : nothing}
         </header>
-        ${this.message && !["Saved", "Feed requested"].includes(this.message) ? html`<div part="status" class="status" role="status">${this.message}</div>` : nothing}
+        ${this.message ? html`<div part="status" class="status" role="status">${this.message}</div>` : nothing}
         <section
           aria-label="Meal schedule"
           ?inert=${this.busy || this.feedBusy}

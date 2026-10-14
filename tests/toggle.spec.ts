@@ -56,7 +56,8 @@ for (const order of ["before", "after"])
     expect((await calls(page)).length).toBe(1);
     if (order === "before") {
       await incoming(page);
-      await expect(page.locator(".status")).toHaveText("Saving…");
+      await expect(page.locator(".status")).toHaveCount(0);
+  await expect(page.locator("ha-card")).toHaveAttribute("aria-busy", "true");
       await page.evaluate(() =>
         (window as any).resolve({ confirmed: true, revision: 2 }),
       );
@@ -64,7 +65,8 @@ for (const order of ["before", "after"])
       await page.evaluate(() =>
         (window as any).resolve({ confirmed: true, revision: 2 }),
       );
-      await expect(page.locator(".status")).toHaveText("Saving…");
+      await expect(page.locator(".status")).toHaveCount(0);
+  await expect(page.locator("ha-card")).toHaveAttribute("aria-busy", "true");
       await incoming(page);
     }
     await expect(page.locator(".status")).toHaveCount(0);
@@ -122,7 +124,8 @@ for (const override of [
     await page.getByRole("switch", { name: "Enabled 1", exact: true }).click();
     await page.evaluate(() => (window as any).resolve({}));
     await incoming(page, override);
-    await expect(page.locator(".status")).toHaveText("Saving…");
+    await expect(page.locator(".status")).toHaveCount(0);
+  await expect(page.locator("ha-card")).toHaveAttribute("aria-busy", "true");
     expect((await calls(page)).length).toBe(1);
   });
 test("restored switch intent supplies strict true acknowledgement without checkbox", async ({
@@ -223,7 +226,7 @@ test("external changed schedule during toggle denies rather than overwriting a s
   await page.evaluate(() =>
     (window as any).resolve({ confirmed: true, revision: 2 }),
   );
-  await expect(page.locator(".status")).not.toHaveText("Saved");
+  await expect(page.locator(".status")).toContainText("Couldn’t change meal");
   expect((await calls(page)).length).toBe(1);
 });
 test("unknown timeout reverts switch; old handler cannot complete a newer explicit toggle", async ({
@@ -247,7 +250,8 @@ test("unknown timeout reverts switch; old handler cannot complete a newer explic
   await page.evaluate(() =>
     (window as any).oldResolve({ confirmed: true, revision: 2 }),
   );
-  await expect(page.locator(".status")).toHaveText("Saving…");
+  await expect(page.locator(".status")).toHaveCount(0);
+  await expect(page.locator("ha-card")).toHaveAttribute("aria-busy", "true");
   await page.evaluate(() =>
     (window as any).resolve({ confirmed: true, revision: 2 }),
   );
@@ -351,5 +355,6 @@ test("list switch directly sends one exact current-baseline update without edito
   await expect(
     page.getByRole("switch", { name: "Enabled 1", exact: true }),
   ).toBeDisabled();
-  await expect(page.locator(".status")).toHaveText("Saving…");
+  await expect(page.locator(".status")).toHaveCount(0);
+  await expect(page.locator("ha-card")).toHaveAttribute("aria-busy", "true");
 });

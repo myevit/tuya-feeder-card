@@ -25,7 +25,8 @@ test("native editor keeps the list beneath its dialog and Save sends exactly one
       },
     ],
   ]);
-  await expect(page.locator(".status")).toHaveText("Saving…");
+  await expect(page.locator(".status")).toHaveCount(0);
+  await expect(page.locator("ha-card")).toHaveAttribute("aria-busy", "true");
 });
 
 test("Cancel discards only this editor edit without sending anything", async ({

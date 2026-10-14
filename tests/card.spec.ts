@@ -39,7 +39,8 @@ test("one logical update, unchanged rows preserved, empty ACK remains busy until
     ],
   ]);
   await incoming(page, { ...attrs, pending: true, error: "transient report" });
-  await expect(page.locator(".status")).toHaveText("Saving…");
+  await expect(page.locator(".status")).toHaveCount(0);
+  await expect(page.locator("ha-card")).toHaveAttribute("aria-busy", "true");
   for (const a of [
     { ...attrs, meals: changed() },
     { ...attrs, revision: 2, meals: changed() },
@@ -59,7 +60,8 @@ test("one logical update, unchanged rows preserved, empty ACK remains busy until
     },
   ]) {
     await incoming(page, a);
-    await expect(page.locator(".status")).toHaveText("Saving…");
+    await expect(page.locator(".status")).toHaveCount(0);
+  await expect(page.locator("ha-card")).toHaveAttribute("aria-busy", "true");
   }
   await incoming(page, {
     ...attrs,
@@ -95,7 +97,8 @@ test("matching report before handler rejection cannot show success or leak techn
     meals: changed(),
     last_received_at: "2026-01-01T00:01:00Z",
   });
-  await expect(page.locator(".status")).toHaveText("Saving…");
+  await expect(page.locator(".status")).toHaveCount(0);
+  await expect(page.locator("ha-card")).toHaveAttribute("aria-busy", "true");
   await page.evaluate(() =>
     (window as any).rejectSave(new Error("Stale revision private details")),
   );
