@@ -1,6 +1,6 @@
 # Tuya Feeder Card
 
-A touchscreen Home Assistant card for the device-owned daily schedule exposed by [Tuya Feeder](https://github.com/myevit/tuya-feeder). Version **0.2.4** uses integration **0.2.1** for the last-feeding timestamp; integration 0.2.0 remains compatible with schedule/manual controls but has no global feeding timestamp.
+A touchscreen Home Assistant card for the device-owned daily schedule exposed by [Tuya Feeder](https://github.com/myevit/tuya-feeder). Version **0.2.6** uses integration **0.2.1 or later** for the last-feeding timestamp; integration 0.2.0 remains compatible with schedule/manual controls but has no global feeding timestamp.
 
 The transparent wrapper contains independent standard-theme surfaces: one optional manual-feed container and a tile for each meal. A meal's **left icon circle** immediately toggles its enabled state. Its **time/title and subtitle** open a Home Assistant-native meal dialog. No separate right-hand switch, global Save or persistent status footer is shown.
 
@@ -65,7 +65,7 @@ meal_icon: mdi:clock-outline
 
 `meal_icon_mode` and `meal_icon` are available in the visual editor. `icon` controls only the header identity in time-of-day mode. In fixed mode, an omitted `meal_icon` falls back to `icon`, then `mdi:food-drumstick`.
 
-`appearance.icon_color` / `--feeder-icon-color` sets a shared icon palette independently of `accent_color` (Feed). It falls back to the theme’s `--color-teal`, then the existing accent. Active icons use that palette for their circle with a white glyph; inactive icons use the palette for the glyph with a transparent circle. Existing explicit header/active icon overrides retain precedence.
+`appearance.icon_color` / `--feeder-icon-color` sets a shared icon palette independently of `accent_color` (Feed). It falls back to the theme’s `--color-teal`, then the existing accent. Active icons use that palette for their circle with a white glyph. OFF overrides the category palette: the default is a dark translucent circle and white glyph, exactly like the standard entity tile. Header and disabled meals each resolve their own OFF state, independently of active siblings. Customize OFF colors with `appearance.off`, not the active icon palette.
 
 ### Manual feeding
 
@@ -94,6 +94,8 @@ appearance:
 ```
 
 Stable host variables: `--feeder-accent-color`, `--feeder-border-radius`, `--feeder-font-family`, `--feeder-header-font-size`, `--feeder-meal-time-font-size`, `--feeder-row-background`, `--feeder-card-background`, `--feeder-control-size` (44px minimum). Row/card backgrounds customize inactive meal/feed surfaces; they no longer paint the outer wrapper. Additional hooks: `--feeder-outer-background` (transparent), `--feeder-feed-background`, `--feeder-header-icon-background`, `--feeder-header-icon-color`, `--feeder-active-card-background`, `--feeder-active-text-color`, `--feeder-active-muted-color`, `--feeder-active-icon-background`, `--feeder-active-icon-color`. Active defaults are white/black/gray/accent/white. Native dialog controls use HA's own theme, not card-local appearance overrides.
+
+Stable OFF hooks are `--feeder-off-background`, `--feeder-off-icon-background`, `--feeder-off-icon-color`, `--feeder-off-title-color`, and `--feeder-off-subtitle-color`. The corresponding validated `appearance.off` fields are `background`, `icon_background`, `icon_color`, `title_color`, and `subtitle_color`, also exposed under **Off appearance** in the visual editor. Defaults are the standard `rgba(0, 0, 0, 0.3)` tile, `rgba(0, 0, 0, 0.2)` circle, white glyph/title and `rgba(255, 255, 255, 0.5)` details. Explicit OFF values override the category palette only while inactive; active teal/white contrast is unchanged. Unset OFF background keeps the existing row/card background hooks.
 
 Shadow parts: `card`, `header`, `manual-feed`, `header-icon`, `title`, `subtitle`, `meal`, `row`, `meal-time`, `meal-button`, `enabled`, `control`, `add`, `status`. `data-active` describes manual-surface activity; each row has `data-enabled`. Optional existing card-mod can override these without backend changes; no card-mod is imported or required.
 

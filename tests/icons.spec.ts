@@ -134,7 +134,7 @@ test("icon palette is independent of Feed accent with state contrast", async ({
   expect(styles).toEqual([
     { bg: "rgb(10, 180, 170)", color: "rgb(255, 255, 255)" },
     { bg: "rgb(10, 180, 170)", color: "rgb(255, 255, 255)" },
-    { bg: "rgba(0, 0, 0, 0)", color: "rgb(10, 180, 170)" },
+    { bg: "rgba(0, 0, 0, 0.2)", color: "rgb(255, 255, 255)" },
   ]);
   expect(await calls(page)).toEqual([]);
 });

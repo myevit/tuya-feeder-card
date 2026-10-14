@@ -117,7 +117,8 @@ test("independent standard surfaces use saved meal activity and transparent wrap
   expect(actual.rows[1].surface.bg).toBe("rgba(0, 0, 0, 0.3)");
   expect(actual.rows[1].title.color).toBe("rgb(255, 255, 255)");
   expect(actual.rows[1].detail.color).toBe("rgba(255, 255, 255, 0.5)");
-  expect(actual.rows[1].icon.bg).toBe("rgba(0, 0, 0, 0)");
+  expect(actual.rows[1].icon.bg).toBe("rgba(0, 0, 0, 0.2)");
+  expect(actual.rows[1].icon.color).toBe("rgb(255, 255, 255)");
 });
 
 test("single identity header merges manual controls and preserves legacy fallback", async ({

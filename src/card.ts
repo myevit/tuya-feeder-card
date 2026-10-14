@@ -15,6 +15,16 @@ type Meal = {
   portions: number;
   enabled: boolean;
 };
+type OffAppearance = Partial<
+  Record<
+    | "background"
+    | "icon_background"
+    | "icon_color"
+    | "title_color"
+    | "subtitle_color",
+    string
+  >
+>;
 type Appearance = Partial<
   Record<
     | "accent_color"
@@ -28,7 +38,7 @@ type Appearance = Partial<
     | "control_size",
     string
   >
->;
+> & { off?: OffAppearance };
 type Config = {
   type?: string;
   entity: string;
@@ -89,6 +99,13 @@ const APPEARANCE = [
   "card_background",
   "control_size",
 ] as const;
+const OFF_APPEARANCE = [
+  "background",
+  "icon_background",
+  "icon_color",
+  "title_color",
+  "subtitle_color",
+] as const;
 // Only individual CSS property values, never a stylesheet, HTML, URL or selector.
 function safeAppearance(a: Appearance = {}): Appearance {
   const out: Appearance = {};
@@ -114,6 +131,23 @@ function safeAppearance(a: Appearance = {}): Appearance {
     )
       throw new Error(`Invalid appearance.${key}`);
     out[key] = v;
+  }
+  if (a.off !== undefined) {
+    if (!a.off || typeof a.off !== "object" || Array.isArray(a.off))
+      throw new Error("Invalid appearance.off");
+    out.off = {};
+    for (const key of OFF_APPEARANCE) {
+      const v = a.off[key];
+      if (v === undefined || v === "") continue;
+      if (
+        typeof v !== "string" ||
+        v.length > 160 ||
+        /[;{}<>\\]|url\s*\(|expression\s*\(|!important|\/\*/i.test(v) ||
+        !CSS.supports("color", v)
+      )
+        throw new Error(`Invalid appearance.off.${key}`);
+      out.off[key] = v;
+    }
   }
   return out;
 }
@@ -172,6 +206,12 @@ export class TuyaFeederCard extends LitElement {
       this.style.removeProperty(`--feeder-${key.replaceAll("_", "-")}`);
       const v = this.config.appearance?.[key];
       if (v) this.style.setProperty(`--feeder-${key.replaceAll("_", "-")}`, v);
+    }
+    for (const key of OFF_APPEARANCE) {
+      const prop = `--feeder-off-${key.replaceAll("_", "-")}`;
+      this.style.removeProperty(prop);
+      const v = this.config.appearance?.off?.[key];
+      if (v) this.style.setProperty(prop, v);
     }
     this.reset();
   }
@@ -1280,6 +1320,71 @@ export class TuyaFeederCard extends LitElement {
         font-size: 15px;
       }
     }
+    /* OFF is a semantic state, not a transparent category-accent glyph.
+       Keep each tile independent: an active header cannot color disabled meals. */
+    header[data-active="false"]:not(.edit-header):has(> .identity-add),
+    .meal[data-enabled="false"] {
+      background: var(
+        --feeder-off-background,
+        var(--feeder-row-background, rgba(0, 0, 0, 0.3))
+      );
+      color: var(--feeder-off-title-color, white);
+      font-size: 1.2rem;
+      min-height: 69px;
+    }
+    header[data-active="false"]:not(.edit-header):has(> .identity-add) {
+      background: var(
+        --feeder-off-background,
+        var(
+          --feeder-feed-background,
+          var(--feeder-card-background, rgba(0, 0, 0, 0.3))
+        )
+      );
+    }
+    header[data-active="false"] .identity-add ha-icon,
+    .meal[data-enabled="false"] .meal-toggle ha-icon {
+      background: var(--feeder-off-icon-background, rgba(0, 0, 0, 0.2));
+      color: var(--feeder-off-icon-color, white);
+      border-radius: 24px;
+      box-sizing: content-box;
+      width: 25px;
+      height: 25px;
+      font-size: inherit;
+      font-weight: 400;
+    }
+    header[data-active="false"] h2 {
+      color: var(--feeder-off-title-color, white);
+      font-size: var(--feeder-header-font-size, 17px);
+      line-height: normal;
+    }
+    header[data-active="false"] .last-feed,
+    .meal[data-enabled="false"] .detail {
+      color: var(--feeder-off-subtitle-color, rgba(255, 255, 255, 0.5));
+      font-size: 15px;
+      font-weight: 400;
+      line-height: normal;
+    }
+    .meal[data-enabled="false"] .time {
+      color: var(--feeder-off-title-color, white);
+      line-height: normal;
+    }
+    header:not(.edit-header):has(> .identity-add),
+    header.manual:not(.edit-header):has(> .identity-add),
+    .meal {
+      padding: 0 10px 0 0;
+    }
+    .open {
+      padding-right: 0;
+    }
+    header[data-active="false"] {
+      min-height: 69px;
+      grid-template-columns: 66px minmax(0, 1fr);
+    }
+    header.manual[data-active="false"]:not(.edit-header):has(> .identity-add) {
+      grid-template-columns: 66px minmax(0, 1fr) var(--control) 28px var(
+          --control
+        ) 55px;
+    }
     [inert] {
       pointer-events: none;
     }
@@ -1316,6 +1421,11 @@ class TuyaFeederCardEditor extends LitElement {
       row_background: "Row color",
       card_background: "Card color",
       control_size: "Control size (minimum 44px)",
+      off: "Off appearance",
+      background: "Tile color",
+      icon_background: "Icon circle color",
+      title_color: "Title color",
+      subtitle_color: "Details color",
     };
     return html`<ha-form
       .hass=${this.hass}
@@ -1352,7 +1462,17 @@ class TuyaFeederCardEditor extends LitElement {
         {
           name: "appearance",
           type: "expandable",
-          schema: APPEARANCE.map((name) => ({ name, selector: { text: {} } })),
+          schema: [
+            ...APPEARANCE.map((name) => ({ name, selector: { text: {} } })),
+            {
+              name: "off",
+              type: "expandable",
+              schema: OFF_APPEARANCE.map((name) => ({
+                name,
+                selector: { text: {} },
+              })),
+            },
+          ],
         },
       ]}
       .computeLabel=${(s: { name: string }) => labels[s.name] ?? s.name}
