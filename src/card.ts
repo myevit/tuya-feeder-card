@@ -1381,10 +1381,20 @@ export class TuyaFeederCard extends LitElement {
       min-height: 69px;
       grid-template-columns: 66px minmax(0, 1fr);
     }
-    header.manual[data-active="false"]:not(.edit-header):has(> .identity-add) {
-      grid-template-columns: 66px minmax(0, 1fr) var(--control) 28px var(
-          --control
-        ) 55px;
+    /* Reserve the same comfortable action space in active, OFF and compact rows. */
+    header.manual[data-active]:not(.edit-header):has(> .identity-add) {
+      grid-template-columns:
+        64px minmax(0, 1fr) var(--control) 28px var(--control) 84px;
+      padding-right: 10px;
+    }
+    .manual .feed {
+      box-sizing: border-box;
+      width: 76px;
+      min-width: 76px;
+      min-height: var(--control);
+      margin-left: 8px;
+      padding: 8px 16px;
+      white-space: nowrap;
     }
     [inert] {
       pointer-events: none;
