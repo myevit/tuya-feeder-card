@@ -22,7 +22,7 @@ async function manual(page: any, helper = false) {
   await setup(page, {
     ...attrs,
     supports_manual_feed: true,
-    manual_feed_pending: false,
+    feeding_pending: false,
   });
   await page.evaluate((helper: boolean) => {
     const c: any = document.querySelector("tuya-feeder-card");
@@ -66,7 +66,11 @@ test("manual selection makes no feeding call, confirmation snapshots exact dose,
   await page.getByRole("button", { name: "Feed", exact: true }).click();
   await page.getByRole("button", { name: "Feed now", exact: true }).click();
   expect(await calls(page)).toEqual([
-    ["tuya_feeder", "feed", { entity_id: "sensor.mock_feeder", portions: 2 }],
+    [
+      "localtuya",
+      "feed",
+      { entity_id: "sensor.mock_feeder", portions: 2, confirmed: true },
+    ],
   ]);
 });
 
@@ -101,9 +105,9 @@ test("persistent helper keeps existing value and bounds; helper updates never fe
   );
   await page.getByRole("button", { name: "Feed now", exact: true }).click();
   expect((await calls(page))[1]).toEqual([
-    "tuya_feeder",
+    "localtuya",
     "feed",
-    { entity_id: "sensor.mock_feeder", portions: 4 },
+    { entity_id: "sensor.mock_feeder", portions: 4, confirmed: true },
   ]);
   await expect(
     page.getByRole("button", { name: "Increase feeding portions" }),

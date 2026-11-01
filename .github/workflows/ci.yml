@@ -36,21 +36,22 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/checkout@v4
         with:
-          repository: myevit/tuya-feeder
-          ref: main
+          repository: myevit/hass-localtuya
+          ref: f81c333a0a0e3b1d035651d96747a204dbfef70d
           path: .contract-integration
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
       - uses: actions/setup-python@v7.0.0
         with:
-          python-version: '3.13'
+          python-version: '3.14'
       - run: npm ci && npm run build && npx playwright install --with-deps chromium
-      - run: pip install -r requirements_test.txt
+      - run: pip install -r requirements_feeder_test.txt
         working-directory: .contract-integration
       - run: git rev-parse HEAD && git -C .contract-integration rev-parse HEAD
-      - run: pytest -c pyproject.toml -q ${{ github.workspace }}/tests/ha_contract.py
+      - run: python -m pytest --import-mode=importlib -q ${{ github.workspace }}/tests/ha_contract.py --disable-socket --allow-unix-socket -o asyncio_default_fixture_loop_scope=function
         working-directory: .contract-integration
         env:
-          PYTHONPATH: ${{ github.workspace }}/.contract-integration/tests:${{ github.workspace }}/.contract-integration
+          PYTHONPATH: ${{ github.workspace }}/.contract-integration
+          NATIVE_BACKEND_DIR: ${{ github.workspace }}/.contract-integration
           TUYA_FEEDER_CARD_DIR: ${{ github.workspace }}

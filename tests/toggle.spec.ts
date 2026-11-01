@@ -141,8 +141,8 @@ test("restored switch intent supplies strict true acknowledgement without checkb
   await page.getByRole("switch", { name: "Enabled 1", exact: true }).click();
   expect(await calls(page)).toEqual([
     [
-      "tuya_feeder",
-      "update_meal",
+      "localtuya",
+      "update_feeder_meal",
       {
         entity_id: "sensor.mock_feeder",
         expected_revision: 1,
@@ -269,8 +269,8 @@ test("toggle uses latest reported index/revision and preserves all non-enabled f
   await page.getByRole("switch", { name: "Enabled 1", exact: true }).click();
   expect(await calls(page)).toEqual([
     [
-      "tuya_feeder",
-      "update_meal",
+      "localtuya",
+      "update_feeder_meal",
       {
         entity_id: "sensor.mock_feeder",
         expected_revision: 7,
@@ -335,8 +335,8 @@ test("list switch directly sends one exact current-baseline update without edito
   await page.getByRole("switch", { name: "Enabled 1", exact: true }).click();
   expect(await calls(page)).toEqual([
     [
-      "tuya_feeder",
-      "update_meal",
+      "localtuya",
+      "update_feeder_meal",
       {
         entity_id: "sensor.mock_feeder",
         expected_revision: 1,

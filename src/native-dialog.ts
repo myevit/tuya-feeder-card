@@ -136,7 +136,7 @@ class FeederMealDialog extends LitElement {
     ];
     return html`<ha-dialog
       .open=${this.open}
-      .headerTitle=${deleting ? "Delete meal?" : o.operation === "add_meal" ? "Add meal" : "Edit meal"}
+      .headerTitle=${deleting ? "Delete meal?" : o.operation === "add_feeder_meal" ? "Add meal" : "Edit meal"}
       @closed=${this.dismiss}
     >
       ${
@@ -161,11 +161,12 @@ class FeederMealDialog extends LitElement {
       }
       <ha-dialog-footer slot="footer">
         ${
-          !deleting && o.operation !== "add_meal"
+          !deleting && o.operation !== "add_feeder_meal"
             ? html`<ha-button
                 slot="secondaryAction"
                 appearance="plain"
                 variant="danger"
+                ?disabled=${o.baseline.length <= 1}
                 @click=${() => {
                   o.view = "delete";
                   this.requestUpdate();

@@ -28,8 +28,8 @@ test("one logical update, unchanged rows preserved, empty ACK remains busy until
   await expect(page.locator("section")).toHaveAttribute("inert", "");
   expect(await calls(page)).toEqual([
     [
-      "tuya_feeder",
-      "update_meal",
+      "localtuya",
+      "update_feeder_meal",
       {
         entity_id: "sensor.mock_feeder",
         expected_revision: 1,
@@ -139,7 +139,7 @@ test("revision change even without dirty fields aborts editor and cannot delete 
   await page.getByRole("button", { name: "Reload", exact: true }).click();
   await expect(page.locator(".time")).toHaveText("19:45");
   await open(page);
-  await page.getByRole("button", { name: "Delete", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Delete", exact: true })).toBeDisabled();
   await incoming(page, { ...attrs, revision: 3 });
   await expect(
     page.getByRole("button", { name: "Delete", exact: true }),
@@ -165,8 +165,8 @@ test("add is one disabled meal with same-level Save and no automatic service", a
   await save(page);
   expect(await calls(page)).toEqual([
     [
-      "tuya_feeder",
-      "add_meal",
+      "localtuya",
+      "add_feeder_meal",
       {
         entity_id: "sensor.mock_feeder",
         expected_revision: 1,
