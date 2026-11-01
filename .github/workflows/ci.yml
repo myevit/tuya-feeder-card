@@ -37,7 +37,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: myevit/hass-localtuya
-          ref: 37b7455066689207c9e19f9ea6d424474da8aa81
+          ref: f81c333a0a0e3b1d035651d96747a204dbfef70d
           path: .contract-integration
       - uses: actions/setup-node@v4
         with:

@@ -6,11 +6,14 @@ registry reassignment, real feeding or production schedule change is authorized.
 ## Backend baseline
 
 - Repository: `myevit/hass-localtuya`
-- CI pins published audit-remediated backend `37b7455066689207c9e19f9ea6d424474da8aa81`.
+- CI pins published audit-remediated backend `f81c333a0a0e3b1d035651d96747a204dbfef70d`.
   This exact candidate includes profile-edit preservation, fail-closed invalid selection,
   per-device restore ownership, public five-device lifecycle coverage, packet integrity
-  and fragmented-frame fixes. Native 65 + raw protocol 52 pass together; legacy 21
-  pass in a separate real-HA environment, with TCP/UDP sockets disabled.
+  and fragmented-frame fixes, including recovery of a valid frame embedded in a
+  corrupt-length candidate after integrity rejection. Native 65 + raw protocol 60
+  pass together; legacy 21 pass separately, with TCP/UDP sockets disabled.
+  Incomplete plausible candidates still wait for their full declared length (cap 2000);
+  valid packets are consumed whole only after integrity validation, not scanned inside.
 - Independent review of this combined candidate is pending; earlier runtime reviews
   do not constitute approval of these audit-remediation changes.
 - Authoritative documents: `PUBLICNATIVEFEEDER.md` and `NATIVEFEEDER.md` in that repository.
