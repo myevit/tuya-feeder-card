@@ -6,10 +6,12 @@ registry reassignment, real feeding or production schedule change is authorized.
 ## Backend baseline
 
 - Repository: `myevit/hass-localtuya`
-- Reviewed contract baseline: `ca28259d4867ad47adb56a263a5aea39d1e334b7`
+- Independently reviewed runtime baseline: `883e9b9fa2b07e5d7fbcac9d339d8aa5e26410a1`
+- CI pins published backend `cb35d15a260edd462f8a98953c060d732b111559`.
+  Its only delta is CI/privacy tooling and AST-identical Black wrapping.
 - Authoritative documents: `PUBLICNATIVEFEEDER.md` and `NATIVEFEEDER.md` in that repository.
-- CI pins that exact candidate; publishing the backend is a separate parent gate.
-  If paired review changes the API, requalify and update the pin before publication.
+- Backend candidate PR: https://github.com/myevit/hass-localtuya/pull/1
+  Requalify the exact published pair before merge; no activation is implied.
 
 ## Caller migration
 
