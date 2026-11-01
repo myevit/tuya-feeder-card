@@ -6,9 +6,13 @@ registry reassignment, real feeding or production schedule change is authorized.
 ## Backend baseline
 
 - Repository: `myevit/hass-localtuya`
-- Independently reviewed runtime baseline: `883e9b9fa2b07e5d7fbcac9d339d8aa5e26410a1`
-- CI pins published backend `cb35d15a260edd462f8a98953c060d732b111559`.
-  Its only delta is CI/privacy tooling and AST-identical Black wrapping.
+- CI pins published audit-remediated backend `37b7455066689207c9e19f9ea6d424474da8aa81`.
+  This exact candidate includes profile-edit preservation, fail-closed invalid selection,
+  per-device restore ownership, public five-device lifecycle coverage, packet integrity
+  and fragmented-frame fixes. Native 65 + raw protocol 52 pass together; legacy 21
+  pass in a separate real-HA environment, with TCP/UDP sockets disabled.
+- Independent review of this combined candidate is pending; earlier runtime reviews
+  do not constitute approval of these audit-remediation changes.
 - Authoritative documents: `PUBLICNATIVEFEEDER.md` and `NATIVEFEEDER.md` in that repository.
 - Backend candidate PR: https://github.com/myevit/hass-localtuya/pull/1
   Requalify the exact published pair before merge; no activation is implied.
