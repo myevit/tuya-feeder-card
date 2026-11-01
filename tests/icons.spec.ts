@@ -163,8 +163,8 @@ test("identity icon is the only Add target; opening and cancelling never writes"
   await page.getByRole("button", { name: "Save", exact: true }).click();
   expect(await calls(page)).toEqual([
     [
-      "tuya_feeder",
-      "add_meal",
+      "localtuya",
+      "add_feeder_meal",
       {
         entity_id: "sensor.mock_feeder",
         expected_revision: 1,

@@ -10,6 +10,7 @@ export const days = [
   "sunday",
 ];
 export const attrs = {
+  native_feeder_profile: "ft11w",
   meals: [
     { days, time: "08:15", portions: 3, enabled: true },
     { days, time: "19:45", portions: 2, enabled: false },
@@ -34,7 +35,7 @@ export async function setup(page: Page, a: any = attrs) {
     c.setConfig({ entity: "sensor.mock_feeder" });
     (window as any).calls = [];
     c.hass = {
-      states: { "sensor.mock_feeder": { state: "ready", attributes: a } },
+      states: { "sensor.mock_feeder": { state: "2", attributes: a } },
       callService: async (...args: any[]) => {
         (window as any).calls.push(args);
         return {};
@@ -43,4 +44,5 @@ export async function setup(page: Page, a: any = attrs) {
     document.body.append(c);
   }, a);
 }
-export const calls = (page: Page) => page.evaluate(() => (window as any).calls);
+export const calls = (page: Page) =>
+  page.evaluate(() => (window as any).calls.map((a: any[]) => a.slice(0, 3)));

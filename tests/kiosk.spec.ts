@@ -15,8 +15,8 @@ test("native editor keeps the list beneath its dialog and Save sends exactly one
   await page.getByRole("button", { name: "Save", exact: true }).click();
   expect(await calls(page)).toEqual([
     [
-      "tuya_feeder",
-      "update_meal",
+      "localtuya",
+      "update_feeder_meal",
       {
         entity_id: "sensor.mock_feeder",
         expected_revision: 1,
@@ -57,8 +57,8 @@ test("delete confirmation stays in the native dialog", async ({ page }) => {
   await page.getByRole("button", { name: "Delete", exact: true }).click();
   expect(await calls(page)).toEqual([
     [
-      "tuya_feeder",
-      "delete_meal",
+      "localtuya",
+      "delete_feeder_meal",
       { entity_id: "sensor.mock_feeder", expected_revision: 1, meal_index: 1 },
     ],
   ]);
@@ -87,7 +87,7 @@ test("backend not yet reloaded cannot expose falsely working schedule controls",
   await setup(page);
   await page.evaluate(() => {
     const c: any = document.querySelector("tuya-feeder-card");
-    c.hass = { ...c.hass, services: { tuya_feeder: { set_schedule: {} } } };
+    c.hass = { ...c.hass, services: { localtuya: { set_feeder_schedule: {} } } };
   });
   await expect(page.locator("ha-card")).toContainText("Schedule unavailable");
   await expect(

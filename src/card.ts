@@ -56,7 +56,14 @@ type Hass = {
   states: Record<string, { state: string; attributes: Record<string, any> }>;
   services?: Record<string, Record<string, unknown>>;
   config?: { time_zone?: string };
-  callService: (domain: string, service: string, data: unknown) => Promise<any>;
+  callService: (
+    domain: string,
+    service: string,
+    data: unknown,
+    target?: unknown,
+    notify?: boolean,
+    returnResponse?: boolean,
+  ) => Promise<any>;
 };
 const clone = (m: Meal[]) => m.map((x) => ({ ...x, days: [...x.days] }));
 const valid = (m: unknown, max = 10, portions = 60): m is Meal[] =>
@@ -186,8 +193,11 @@ export class TuyaFeederCard extends LitElement {
   private attempt = 0;
   private failed = false;
   private toggling: number | null = null;
-  private operation: "update_meal" | "add_meal" | "delete_meal" = "update_meal";
+  private operation:
+    "update_feeder_meal" | "add_feeder_meal" | "delete_feeder_meal" =
+    "update_feeder_meal";
   private feedDose?: number;
+  private feedUnresolved = false;
   private timer?: ReturnType<typeof setTimeout>;
   setConfig(c: Config) {
     if (!c.entity?.startsWith("sensor."))
@@ -272,9 +282,10 @@ export class TuyaFeederCard extends LitElement {
       a = this.attrs;
     return (
       !!s &&
+      a.native_feeder_profile === "ft11w" &&
       (!this._hass?.services ||
-        ["update_meal", "add_meal", "delete_meal"].every(
-          (name) => !!this._hass?.services?.tuya_feeder?.[name],
+        ["update_feeder_meal", "add_feeder_meal", "delete_feeder_meal"].every(
+          (name) => !!this._hass?.services?.localtuya?.[name],
         )) &&
       !["unknown", "unavailable"].includes(s.state) &&
       ((a.supports_schedule_write === true &&
@@ -344,7 +355,7 @@ export class TuyaFeederCard extends LitElement {
   private async openEditor(i: number, enabled?: boolean) {
     if (this.locked || this.view !== "list") return;
     this.load();
-    this.operation = "update_meal";
+    this.operation = "update_feeder_meal";
     this.editing = i;
     this.view = "edit";
     this.acknowledged = false;
@@ -356,7 +367,7 @@ export class TuyaFeederCard extends LitElement {
     } catch (e) {
       this.view = "list";
       this.message = "Couldn’t open editor. Refresh Home Assistant.";
-      console.error(e);
+      // Keep internal error details out of the browser log.
     }
   }
   private async toggle(i: number, event: Event) {
@@ -371,7 +382,7 @@ export class TuyaFeederCard extends LitElement {
     // Refresh the baseline synchronously; backend merges at this exact revision.
     this.load();
     if (!this.baseline[i] || this.baseline[i].enabled === enabled) return;
-    this.operation = "update_meal";
+    this.operation = "update_feeder_meal";
     this.editing = i;
     this.toggling = i;
     this.acknowledged = this.attrs.snapshot_source === "restored";
@@ -387,7 +398,7 @@ export class TuyaFeederCard extends LitElement {
       return;
     this.load();
     this.editing = this.draft.length;
-    this.operation = "add_meal";
+    this.operation = "add_feeder_meal";
     this.view = "edit";
     this.acknowledged = false;
     this.message = "";
@@ -401,7 +412,7 @@ export class TuyaFeederCard extends LitElement {
     } catch (e) {
       this.view = "list";
       this.message = "Couldn’t open editor. Refresh Home Assistant.";
-      console.error(e);
+      // Keep internal error details out of the browser log.
     }
   }
   private edit(key: keyof Meal, value: unknown) {
@@ -437,7 +448,7 @@ export class TuyaFeederCard extends LitElement {
     this.timer = undefined;
   }
   private failure(e: unknown) {
-    console.error("Tuya feeder operation failed", e);
+    // Service errors can contain private transport details; never log them.
     this.attempt++;
     this.clearTimer();
     this.busy = false;
@@ -467,7 +478,7 @@ export class TuyaFeederCard extends LitElement {
     )
       return;
     this.failed = false;
-    this.view = this.operation === "delete_meal" ? "delete" : "edit";
+    this.view = this.operation === "delete_feeder_meal" ? "delete" : "edit";
     this.message = "";
     try {
       await nativeComponents();
@@ -475,7 +486,7 @@ export class TuyaFeederCard extends LitElement {
     } catch (e) {
       this.view = "list";
       this.message = "Couldn’t open editor. Refresh Home Assistant.";
-      console.error(e);
+      // Keep internal error details out of the browser log.
     }
   }
   private async save(deleting = false) {
@@ -493,7 +504,8 @@ export class TuyaFeederCard extends LitElement {
         : !this.saveable
     )
       return;
-    if (deleting) this.operation = "delete_meal";
+    if (deleting && this.baseline.length <= 1) return;
+    if (deleting) this.operation = "delete_feeder_meal";
     const index = this.editing;
     this.sent = deleting
       ? clone(this.baseline.filter((_, i) => i !== index))
@@ -501,7 +513,7 @@ export class TuyaFeederCard extends LitElement {
     const data = {
       entity_id: this.config.entity,
       expected_revision: this.base,
-      ...(this.operation !== "add_meal" ? { meal_index: index } : {}),
+      ...(this.operation !== "add_feeder_meal" ? { meal_index: index } : {}),
       ...(!deleting ? { meal: clone([this.draft[index]])[0] } : {}),
       ...(this.attrs.snapshot_source === "restored"
         ? { acknowledge_restored_snapshot: true }
@@ -523,9 +535,12 @@ export class TuyaFeederCard extends LitElement {
     }, 20000);
     try {
       const r = await this.hass.callService(
-        "tuya_feeder",
+        "localtuya",
         this.operation,
         data,
+        undefined,
+        undefined,
+        true,
       );
       if (!this.busy || this.attempt !== attempt) return;
       if (
@@ -572,10 +587,19 @@ export class TuyaFeederCard extends LitElement {
     const n = this.selectedPortions,
       b = this.feedBounds;
     return (
+      this.attrs.native_feeder_profile === "ft11w" &&
+      !this.feedUnresolved &&
+      !!this._hass?.states[this.config.entity] &&
+      !["unknown", "unavailable"].includes(
+        this._hass.states[this.config.entity].state,
+      ) &&
+      !["unknown", "command_pending", "feeding"].includes(
+        this.attrs.feeding_state,
+      ) &&
       this.attrs.supports_manual_feed === true &&
       !this.attrs.feeding_pending &&
       !this.attrs.pending &&
-      (!this.hass.services || !!this.hass.services.tuya_feeder?.feed) &&
+      (!this.hass.services || !!this.hass.services.localtuya?.feed) &&
       !!b &&
       Number.isInteger(n) &&
       n >= b.min &&
@@ -614,7 +638,7 @@ export class TuyaFeederCard extends LitElement {
         },
       );
     } catch (e) {
-      console.error("Tuya feeder portions selection failed", e);
+      // Do not expose HA service error details.
       this.message = "Couldn’t change portions. Try again.";
     } finally {
       this.helperBusy = false;
@@ -631,7 +655,7 @@ export class TuyaFeederCard extends LitElement {
     } catch (e) {
       this.view = "list";
       this.message = "Couldn’t open confirmation. Refresh Home Assistant.";
-      console.error(e);
+      // Keep internal error details out of the browser log.
     }
   }
   private async feed() {
@@ -646,15 +670,27 @@ export class TuyaFeederCard extends LitElement {
     this.view = "list";
     this.message = "";
     try {
-      const r = await this.hass.callService("tuya_feeder", "feed", {
-        entity_id: this.config.entity,
-        portions: this.feedDose,
-      });
-      if (r?.error) throw new Error(String(r.error));
+      this.feedUnresolved = true;
+      const r = await this.hass.callService(
+        "localtuya",
+        "feed",
+        {
+          entity_id: this.config.entity,
+          portions: this.feedDose,
+          confirmed: true,
+        },
+        undefined,
+        undefined,
+        true,
+      );
+      const result = r?.response ?? r;
+      if (result?.error || result?.reported !== true)
+        throw new Error("unconfirmed");
+      this.feedUnresolved = false;
       this.message = "";
     } catch (e) {
-      console.error("Tuya feeder manual feed failed", e);
-      this.message = "Couldn’t feed. Try again.";
+      this.message =
+        "Feeding outcome unknown. Check the feeder before any further action.";
     } finally {
       this.feedBusy = false;
       this.feedDose = undefined;
@@ -774,7 +810,13 @@ export class TuyaFeederCard extends LitElement {
           ?inert=${this.busy || this.feedBusy}
         >
           ${
-            this.writable || this.busy || this.failed || this.conflict
+            this.writable ||
+            (this.attrs.native_feeder_profile === "ft11w" &&
+              this.attrs.snapshot_source === "restored" &&
+              this.attrs.schedule_valid === true) ||
+            this.busy ||
+            this.failed ||
+            this.conflict
               ? this.baseline.map(
                   (meal, n) =>
                     html`<div
@@ -821,6 +863,7 @@ export class TuyaFeederCard extends LitElement {
                 )
               : html`<div class="unavailable">Schedule unavailable</div>`
           }
+          ${!this.writable && this.attrs.snapshot_source === "restored" && this.attrs.schedule_valid === true ? html`<div class="unavailable">Schedule unavailable</div>` : nothing}
           ${!this.writable && !this.busy && !this.failed && !this.conflict ? html`<button @click=${this.reset}>Retry</button>` : nothing}
         </section>`}
       ${this.conflict ? html`<button @click=${this.reset}>Reload</button>` : this.failed ? html`<div class="actions"><button @click=${this.reset}>Cancel</button><button ?disabled=${!this.writable} @click=${this.retry}>Try again</button></div>` : nothing}
@@ -1446,7 +1489,17 @@ class TuyaFeederCardEditor extends LitElement {
           name: "entity",
           required: true,
           selector: {
-            entity: { domain: "sensor", integration: "tuya_feeder" },
+            entity: {
+              domain: "sensor",
+              integration: "localtuya",
+              include_entities: Object.entries(this.hass?.states ?? {})
+                .filter(
+                  ([id, s]) =>
+                    id.startsWith("sensor.") &&
+                    s.attributes.native_feeder_profile === "ft11w",
+                )
+                .map(([id]) => id),
+            },
           },
         },
         { name: "title", selector: { text: {} } },

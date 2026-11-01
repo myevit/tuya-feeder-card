@@ -1,19 +1,21 @@
 # Tuya Feeder Card
 
-A touchscreen Home Assistant card for the device-owned daily schedule exposed by [Tuya Feeder](https://github.com/myevit/tuya-feeder). Version **0.2.6** uses integration **0.2.1 or later** for the last-feeding timestamp; integration 0.2.0 remains compatible with schedule/manual controls but has no global feeding timestamp.
+A touchscreen Home Assistant card for the native FT-11W profile in [LocalTuya](https://github.com/myevit/hass-localtuya). **0.3.0 is a breaking native-contract candidate**, prepared locally, not released or activated. It requires the paired native backend; the old ad-hoc integration is not supported or shimmed.
 
 The transparent wrapper contains independent standard-theme surfaces: one optional manual-feed container and a tile for each meal. A meal's **left icon circle** immediately toggles its enabled state. Its **time/title and subtitle** open a Home Assistant-native meal dialog. No separate right-hand switch, global Save or persistent status footer is shown.
 
 ## Synthetic previews
 
-These screenshots render the built card with synthetic fixtures and mock transport; they are not a live installation or physical acceptance test. Native-dialog acceptance uses real installed HA components separately.
+These screenshots render the built card with synthetic fixtures and mock transport; they are not a live installation or physical acceptance test. The migration suite uses explicitly labeled native-control doubles, not a live HA frontend.
 
 ![Wide synthetic schedule](docs/mock-wide.png)
 ![Narrow synthetic schedule](docs/mock-mobile.png)
 
+See [the native migration and activation boundary](docs/NATIVE_MIGRATION.md) before changing any caller or installation.
+
 ## HACS installation
 
-1. Install/configure the Tuya Feeder integration.
+1. After paired review and separate activation approval, install/configure the native LocalTuya FT-11W profile. This document does not authorize activation.
 2. In HACS → Custom repositories add `https://github.com/myevit/tuya-feeder-card` as **Dashboard**.
 3. Download a release and let HACS add its module resource. Refresh after an update; avoid duplicate resources.
 4. Add **Tuya Feeder** with the visual editor, selecting its schedule sensor.
@@ -31,12 +33,12 @@ The integration owns discovery, validation, transport and confirmation. This car
 
 ## Meals and native dialogs
 
-- The icon circle is a separate accessible switch-button. One tap sends one `update_meal` at the current reported revision, without opening an editor or adding a confirmation/global Save. Keyboard activation has the same isolation. Activity/color uses the actual reported enabled state, not a draft or optimistic setting.
+- The icon circle is a separate accessible switch-button. One tap sends one `update_feeder_meal` at the current reported revision, without opening an editor or adding a confirmation/global Save. Keyboard activation has the same isolation. Activity/color uses the actual reported enabled state, not a draft or optimistic setting.
 - The title/body opens time, portions and enabled fields in native `ha-dialog`/`ha-form` controls. Every-day operation remains the supported repeat mode. **Save** closes the dialog and sends one meal operation. Cancel, Escape, the native X and available backdrop dismissal discard drafts and send nothing.
 - **+** opens the same native Add dialog with a disabled meal at 23:59 and one portion. At the device limit (at most ten), adding is disabled.
 - **Delete** changes the native shell to a destructive Cancel/Delete confirmation. Only the final Delete sends a logical deletion.
 - A restored plan requires explicit **Use saved plan?** acknowledgement before editor Save/Delete. Direct icon intent supplies strict acknowledgement only with validated restored-write capability. Invalid, uncertain, unsupported and stale plans remain blocked.
-- Inline **Saving…** remains until real handler completion plus a newer genuine matching report. A command/service ACK alone is not success. No persistent Saved/source/status footer is rendered.
+- The pending schedule stays silent and disabled until real handler completion plus a newer genuine matching report. A command/service ACK alone is not success. No persistent Saved/source/status footer is rendered.
 - Editor failure retains the draft. **Try again** reopens it; only a new explicit Save can resend. Toggle failure returns to actual reported state with a plain error. Nothing automatically retries. A concurrent plan change invalidates the dialog and requires Reload.
 - Unknown/malformed/unavailable schedules stay explicitly unavailable, never falsely loaded.
 
@@ -71,7 +73,7 @@ meal_icon: mdi:clock-outline
 
 The manual surface has one icon/title/subtitle identity followed by minus/count/plus and **Feed**. `feed_title`/`feed_icon` remain deprecated fallback aliases; explicit title/icon win. Only controls actuate; the outer wrapper is inert.
 
-Changing portions never feeds. **Feed** opens native confirmation of the exact captured dose; Cancel/Escape/X/backdrop send nothing. **Feed now** sends one `tuya_feeder.feed`. The backend enforces 1–60 portions, duplicate/uncertain guards and no automatic retry. Feed request success is not asserted as physical delivery.
+Changing portions never feeds. **Feed** opens native confirmation of the exact captured dose; Cancel/Escape/X/backdrop send nothing. **Feed now** sends one `localtuya.feed`. The backend enforces 1–60 portions, duplicate/uncertain guards and no automatic retry. Feed request success is not asserted as physical delivery.
 
 Feed is disabled without `supports_manual_feed`. Existing helper selection/bounds remain intact: use authoritative HA increment/decrement, never rewrite helper configuration. Use integer step 1 with bounds within 1–60. Without a helper the count is card-session-local. Missing/out-of-range values are not silently clamped.
 
@@ -101,12 +103,12 @@ Shadow parts: `card`, `header`, `manual-feed`, `header-icon`, `title`, `subtitle
 
 ## Service contract
 
-- `update_meal`: `{entity_id, expected_revision, meal_index, meal}`
-- `add_meal`: `{entity_id, expected_revision, meal}`
-- `delete_meal`: `{entity_id, expected_revision, meal_index}`
-- `feed`: `{entity_id, portions}`
+- `update_feeder_meal`: `{entity_id, expected_revision, meal_index, meal}`
+- `add_feeder_meal`: `{entity_id, expected_revision, meal}`
+- `delete_feeder_meal`: `{entity_id, expected_revision, meal_index}`
+- `feed`: `{entity_id, portions, confirmed: true}`
 
-Meal: `{days: [all seven lowercase names], time: "HH:MM", portions: integer, enabled: boolean}`. Indices are zero-based. Restored operations add strict `acknowledge_restored_snapshot: true` only after explicit editor acknowledgement or permitted direct icon intent. Backend merges preserve untouched records. The legacy integration `set_schedule` remains compatible but this card does not call it.
+Meal: `{days: [all seven lowercase names], time: "HH:MM", portions: integer, enabled: boolean}`. Indices are zero-based. Restored operations add strict `acknowledge_restored_snapshot: true` only after explicit editor acknowledgement or permitted direct icon intent. Backend merges preserve untouched records. All calls use domain `localtuya` and request an HA service response. `set_feeder_schedule` accepts `{entity_id, expected_revision, meals}`; this UI uses meal CRUD to preserve untouched raw records. There is no old-domain fallback or raw DP access.
 
 ## Development
 
@@ -118,4 +120,4 @@ npm test
 python3 scripts/check_public.py
 ```
 
-`CHROMIUM_PATH` may select installed Chromium. CI verifies deterministic TypeScript/build, browser safety/interaction, public-data hygiene, HACS and actual paired HA handler/state contracts. The bridge resolves its mocked service Promise only after the real HA harness handler finishes, so matching attributes alone cannot finish Save. Public fixtures are synthetic; tests/install issue no physical feeds or live schedule writes.
+`CHROMIUM_PATH` may select installed Chromium. CI is prepared to verify deterministic TypeScript/build, browser safety/interaction, public-data hygiene, HACS and actual paired HA handler/state contracts after the pinned backend commit is published. The bridge resolves its mocked service Promise only after the real HA harness handler finishes, so matching attributes alone cannot finish Save. Public fixtures are synthetic; tests/install issue no physical feeds or live schedule writes.
