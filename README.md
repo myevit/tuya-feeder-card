@@ -1,4 +1,21 @@
-# Tuya Feeder Card
+# Tuya Feeder Card — retired
+
+> **Retired frontend:** continued development has moved to [myevit/kiosk-cards](https://github.com/myevit/kiosk-cards). Use its `custom:kiosk-feeder-card` card. This repository is archived and is retained for its history, license, and existing releases; do not install it for new dashboards.
+>
+> **The feeder backend is not retired.** The native FT-11W profile in [myevit/hass-localtuya](https://github.com/myevit/hass-localtuya) remains separate. Frontend migration does not require removing, replacing, or restarting LocalTuya or changing its device configuration.
+
+## Migrate to the consolidated frontend
+
+1. Install a version of [Kiosk Cards](https://github.com/myevit/kiosk-cards) that includes the feeder card and load its `kiosk-cards.js` module resource. Verify `kiosk-feeder-card`, its visual editor, and native meal dialogs are available before removing the old module.
+2. Change only `type: custom:tuya-feeder-card` to `type: custom:kiosk-feeder-card`. Preserve the existing schedule sensor, portions helper, title/icon, grid settings, appearance options, and other configuration fields. The consolidated frontend uses the same native LocalTuya service contract and capability checks; it does not adapt unsupported legacy backends.
+3. Audit every dashboard, nested popup/template, YAML/include, and runtime import for old card/resource references. Verify the editor and interactions without actuating the feeder. Restored-plan acknowledgement, manual-feed confirmation, unavailable/pending guards, and backend capability limits still apply.
+4. Only after no active consumers or imports remain, uninstall **this standalone frontend** from HACS/Marketplace and remove any leftover `tuya-feeder-card.js` resource. Keep the consolidated Kiosk Cards resource and the LocalTuya backend. Existing browser tabs may need a normal reload to use the new frontend.
+
+Historical releases below remain available but will receive no further maintenance. Their installation instructions and compatibility notes are retained as historical documentation, not a recommendation to install the retired package. Restoring an old dashboard backup may require migrating its card type again.
+
+---
+
+## Historical documentation
 
 A touchscreen Home Assistant card for the native FT-11W profile in [LocalTuya](https://github.com/myevit/hass-localtuya). **0.3.0 is a breaking native-contract candidate**, prepared locally, not released or activated. It requires the paired native backend; the old ad-hoc integration is not supported or shimmed.
 
